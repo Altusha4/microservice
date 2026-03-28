@@ -2,6 +2,65 @@
 
 A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles.
 
+Includes a **frontend dashboard** at `http://localhost:3000` for interactive demo during presentations.
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Docker & Docker Compose
+
+### Run everything (all services + dashboard)
+
+```bash
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| **Frontend Dashboard** | http://localhost:3000 |
+| Order Service API | http://localhost:8080 |
+| Payment Service API | http://localhost:8081 |
+| order_db (PostgreSQL) | localhost:5433 |
+| payment_db (PostgreSQL) | localhost:5434 |
+
+---
+
+## Frontend Dashboard
+
+The dashboard is a single-page app served by nginx that proxies all API calls to avoid CORS issues.
+
+### Sections
+
+| Section | Description |
+|---|---|
+| **Quick Demo** | One-click buttons that prefill the form with test scenarios |
+| **Create Order** | Form with Customer ID, Item Name, Amount (cents), optional Idempotency-Key |
+| **Order Actions** | Get order by ID; cancel order (demonstrates 409 for paid orders) |
+| **Payment Lookup** | Retrieve payment status by order ID |
+| **Activity Log** | Real-time log of every request — method, endpoint, status code, collapsible body |
+
+### Quick Demo Scenarios
+
+| Button | Amount | Expected Result |
+|---|---|---|
+| Normal Order ($150) | 15 000 | Status: **Paid** |
+| Over Limit ($1 500) | 150 000 | Payment **Declined** → Order **Failed** |
+| Tiny Order ($1) | 100 | Status: **Paid** |
+| Zero Amount | 0 | **400** Bad Request |
+| Test Idempotency | 2 500 | Run twice — same order returned, no duplicate |
+
+### Status Color Coding
+
+| Status | Color |
+|---|---|
+| Paid / Authorized | Green |
+| Failed / Declined | Red |
+| Pending | Yellow |
+| Cancelled | Gray |
+| 503 / Network Error | Red border |
+
 ---
 
 ## Architecture Decisions
@@ -72,7 +131,11 @@ The Order service **orchestrates** the flow: it creates the order, calls the Pay
 
 ```mermaid
 graph TD
-    Client([Client])
+    Browser([Browser<br/>localhost:3000])
+
+    subgraph frontend
+        Nginx[nginx<br/>static files + proxy]
+    end
 
     subgraph order-service
         OH[HTTP Handler<br/>Gin]
@@ -89,7 +152,9 @@ graph TD
         PDB[(payment_db<br/>PostgreSQL :5434)]
     end
 
-    Client -->|POST /orders<br/>GET /orders/:id<br/>PATCH /orders/:id/cancel| OH
+    Browser -->|/api/orders<br/>/api/payments| Nginx
+    Nginx -->|proxy /api/orders → :8080/orders| OH
+    Nginx -->|proxy /api/payments → :8081/payments| PH
     OH --> OUC
     OUC --> OR
     OR --> ODB
@@ -102,22 +167,6 @@ graph TD
 
 ---
 
-## Getting Started
-
-### Prerequisites
-- Docker & Docker Compose
-
-### Run everything
-
-```bash
-docker compose up --build
-```
-
-Services will be available at:
-- Order Service: `http://localhost:8080`
-- Payment Service: `http://localhost:8081`
-
----
 
 ## API Reference
 
