@@ -13,23 +13,19 @@ import (
 )
 
 func main() {
-	// ── Configuration from environment ──────────────────────────────────────
 	dsn := getEnv("PAYMENT_DB_DSN", "postgres://postgres:postgres@localhost:5434/payment_db?sslmode=disable")
 	port := getEnv("PORT", "8081")
 
-	// ── Database ─────────────────────────────────────────────────────────────
 	db, err := app.OpenDB(dsn)
 	if err != nil {
 		log.Fatalf("connect to payment_db: %v", err)
 	}
 	defer db.Close()
 
-	// ── Dependency Injection (manual composition root) ────────────────────────
 	paymentRepo := postgres.NewPaymentRepo(db)
 	paymentUC := usecase.NewPaymentUseCase(paymentRepo)
 	handler := transporthttp.NewHandler(paymentUC)
 
-	// ── HTTP Server ───────────────────────────────────────────────────────────
 	r := gin.Default()
 	handler.RegisterRoutes(r)
 

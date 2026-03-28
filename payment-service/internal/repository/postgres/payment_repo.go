@@ -9,12 +9,10 @@ import (
 	"github.com/Altusha4/microservice/payment-service/internal/domain"
 )
 
-// PaymentRepo is the PostgreSQL implementation of repository.PaymentRepository.
 type PaymentRepo struct {
 	db *sql.DB
 }
 
-// NewPaymentRepo creates a new PostgreSQL payment repository.
 func NewPaymentRepo(db *sql.DB) *PaymentRepo {
 	return &PaymentRepo{db: db}
 }

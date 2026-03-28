@@ -10,12 +10,10 @@ import (
 	"github.com/Altusha4/microservice/order-service/internal/domain"
 )
 
-// OrderRepo is the PostgreSQL implementation of repository.OrderRepository.
 type OrderRepo struct {
 	db *sql.DB
 }
 
-// NewOrderRepo creates a new PostgreSQL order repository.
 func NewOrderRepo(db *sql.DB) *OrderRepo {
 	return &OrderRepo{db: db}
 }

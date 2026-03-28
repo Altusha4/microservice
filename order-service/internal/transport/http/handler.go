@@ -9,31 +9,26 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler holds references to use cases for thin Gin handlers.
 type Handler struct {
 	orderUC *usecase.OrderUseCase
 }
 
-// NewHandler creates a new HTTP handler.
 func NewHandler(orderUC *usecase.OrderUseCase) *Handler {
 	return &Handler{orderUC: orderUC}
 }
 
-// RegisterRoutes wires up all order-service routes on the given engine.
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/orders", h.CreateOrder)
 	r.GET("/orders/:id", h.GetOrder)
 	r.PATCH("/orders/:id/cancel", h.CancelOrder)
 }
 
-// createOrderRequest is the parsed JSON body for POST /orders.
 type createOrderRequest struct {
 	CustomerID string `json:"customer_id" binding:"required"`
 	ItemName   string `json:"item_name"   binding:"required"`
 	Amount     int64  `json:"amount"      binding:"required,gt=0"`
 }
 
-// orderResponse is the JSON response for order operations.
 type orderResponse struct {
 	ID         string `json:"id"`
 	CustomerID string `json:"customer_id"`
@@ -54,7 +49,6 @@ func toOrderResponse(o *domain.Order) orderResponse {
 	}
 }
 
-// CreateOrder handles POST /orders.
 func (h *Handler) CreateOrder(c *gin.Context) {
 	var req createOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -81,7 +75,6 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, toOrderResponse(order))
 }
 
-// GetOrder handles GET /orders/:id.
 func (h *Handler) GetOrder(c *gin.Context) {
 	id := c.Param("id")
 	order, err := h.orderUC.GetOrder(c.Request.Context(), id)
@@ -96,7 +89,6 @@ func (h *Handler) GetOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, toOrderResponse(order))
 }
 
-// CancelOrder handles PATCH /orders/:id/cancel.
 func (h *Handler) CancelOrder(c *gin.Context) {
 	id := c.Param("id")
 	err := h.orderUC.CancelOrder(c.Request.Context(), id)

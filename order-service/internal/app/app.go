@@ -12,14 +12,11 @@ import (
 	"github.com/Altusha4/microservice/order-service/internal/usecase"
 )
 
-// HTTPPaymentClient implements usecase.PaymentClient using an HTTP REST call.
-// It uses a dedicated http.Client with a 2-second timeout as required.
 type HTTPPaymentClient struct {
 	baseURL    string
 	httpClient *http.Client
 }
 
-// NewHTTPPaymentClient creates a payment client that talks to the given base URL.
 func NewHTTPPaymentClient(baseURL string) *HTTPPaymentClient {
 	return &HTTPPaymentClient{
 		baseURL: baseURL,
@@ -39,7 +36,6 @@ type paymentResponseBody struct {
 	Status        string `json:"status"`
 }
 
-// ProcessPayment calls POST /payments on the payment service.
 func (c *HTTPPaymentClient) ProcessPayment(ctx context.Context, req usecase.PaymentRequest) (*usecase.PaymentResponse, error) {
 	body, err := json.Marshal(paymentRequestBody{OrderID: req.OrderID, Amount: req.Amount})
 	if err != nil {
@@ -73,7 +69,6 @@ func (c *HTTPPaymentClient) ProcessPayment(ctx context.Context, req usecase.Paym
 	}, nil
 }
 
-// OpenDB opens a PostgreSQL connection and verifies it with a ping.
 func OpenDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

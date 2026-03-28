@@ -6,7 +6,6 @@ import (
 	"time"
 )
 
-// OpenDB opens a PostgreSQL connection and verifies it with a ping.
 func OpenDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {

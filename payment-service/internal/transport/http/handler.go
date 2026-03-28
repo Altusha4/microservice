@@ -9,29 +9,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Handler holds references to use cases for thin Gin handlers.
 type Handler struct {
 	paymentUC *usecase.PaymentUseCase
 }
 
-// NewHandler creates a new HTTP handler.
 func NewHandler(paymentUC *usecase.PaymentUseCase) *Handler {
 	return &Handler{paymentUC: paymentUC}
 }
 
-// RegisterRoutes wires up all payment-service routes on the given engine.
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/payments", h.ProcessPayment)
 	r.GET("/payments/:order_id", h.GetPayment)
 }
 
-// processPaymentRequest is the parsed JSON body for POST /payments.
 type processPaymentRequest struct {
 	OrderID string `json:"order_id" binding:"required"`
 	Amount  int64  `json:"amount"   binding:"required,gt=0"`
 }
 
-// paymentResponse is the JSON response for payment operations.
 type paymentResponse struct {
 	ID            string `json:"id"`
 	OrderID       string `json:"order_id"`
@@ -50,7 +45,6 @@ func toPaymentResponse(p *domain.Payment) paymentResponse {
 	}
 }
 
-// ProcessPayment handles POST /payments.
 func (h *Handler) ProcessPayment(c *gin.Context) {
 	var req processPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -71,7 +65,6 @@ func (h *Handler) ProcessPayment(c *gin.Context) {
 	c.JSON(http.StatusCreated, toPaymentResponse(payment))
 }
 
-// GetPayment handles GET /payments/:order_id.
 func (h *Handler) GetPayment(c *gin.Context) {
 	orderID := c.Param("order_id")
 	payment, err := h.paymentUC.GetPaymentByOrderID(c.Request.Context(), orderID)
