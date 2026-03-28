@@ -72,6 +72,17 @@ services:
       payment-service:
         condition: service_started
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - order-service
+      - payment-service
+
 volumes:
   order_db_data:
   payment_db_data:
