@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order &amp; Payment Platform</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-icon">⬡</span>
+        <div>
+          <h1>Order &amp; Payment Platform</h1>
+          <p class="header-sub">Clean Architecture Microservices Demo</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-go">Go</span>
+        <span class="badge badge-gin">Gin</span>
+        <span class="badge badge-pg">PostgreSQL</span>
+        <span class="badge badge-ca">Clean Architecture</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- ── Quick Demo Scenarios ─────────────────────────────────── -->
+    <section class="scenarios-bar">
+      <span class="scenarios-label">Quick Demo:</span>
+      <button class="scenario-btn" data-scenario="normal">Normal Order ($150)</button>
+      <button class="scenario-btn" data-scenario="overlimit">Over Limit ($1 500)</button>
+      <button class="scenario-btn" data-scenario="tiny">Tiny Order ($1)</button>
+      <button class="scenario-btn" data-scenario="zero">Zero Amount</button>
+      <button class="scenario-btn" data-scenario="idempotency">Test Idempotency</button>
+    </section>
+
+    <!-- ── Three-column grid ─────────────────────────────────────── -->
+    <div class="grid-3">
+
+      <!-- Column 1 — Create Order -->
+      <div class="card" id="card-create">
+        <div class="card-header">
+          <span class="card-icon">➕</span>
+          <h2>Create Order</h2>
+        </div>
+
+        <form id="form-create" autocomplete="off">
+          <label class="field-label" for="customerID">Customer ID</label>
+          <input class="field-input" id="customerID" type="text" placeholder="e.g. cust-123" required />
+
+          <label class="field-label" for="itemName">Item Name</label>
+          <input class="field-input" id="itemName" type="text" placeholder="e.g. Laptop" required />
+
+          <label class="field-label" for="amount">Amount <span class="field-hint">(cents — 15000 = $150.00)</span></label>
+          <input class="field-input" id="amount" type="number" min="0" placeholder="e.g. 15000" required />
+
+          <label class="field-label" for="idempKey">Idempotency-Key <span class="field-hint">(optional)</span></label>
+          <input class="field-input" id="idempKey" type="text" placeholder="leave blank to skip" />
+
+          <button class="btn btn-primary" type="submit" id="btn-create">
+            <span class="btn-text">Create Order</span>
+            <span class="spinner hidden" id="spin-create"></span>
+          </button>
+        </form>
+
+        <div id="create-result" class="result-box hidden"></div>
+      </div>
+
+      <!-- Column 2 — Order Actions -->
+      <div class="card" id="card-actions">
+        <div class="card-header">
+          <span class="card-icon">🔍</span>
+          <h2>Order Actions</h2>
+        </div>
+
+        <div class="action-group">
+          <label class="field-label" for="getOrderID">Order ID</label>
+          <div class="input-row">
+            <input class="field-input" id="getOrderID" type="text" placeholder="paste order UUID" />
+            <button class="btn btn-secondary" id="btn-get-order">
+              <span class="btn-text">Get</span>
+              <span class="spinner hidden" id="spin-get"></span>
+            </button>
+          </div>
+          <div id="get-order-result" class="result-box hidden"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="action-group">
+          <label class="field-label" for="cancelOrderID">Order ID</label>
+          <div class="input-row">
+            <input class="field-input" id="cancelOrderID" type="text" placeholder="paste order UUID" />
+            <button class="btn btn-danger" id="btn-cancel-order">
+              <span class="btn-text">Cancel</span>
+              <span class="spinner hidden" id="spin-cancel"></span>
+            </button>
+          </div>
+          <div id="cancel-result" class="result-box hidden"></div>
+        </div>
+      </div>
+
+      <!-- Column 3 — Payment Lookup -->
+      <div class="card" id="card-payment">
+        <div class="card-header">
+          <span class="card-icon">💳</span>
+          <h2>Payment Lookup</h2>
+        </div>
+
+        <div class="action-group">
+          <label class="field-label" for="paymentOrderID">Order ID</label>
+          <div class="input-row">
+            <input class="field-input" id="paymentOrderID" type="text" placeholder="paste order UUID" />
+            <button class="btn btn-secondary" id="btn-get-payment">
+              <span class="btn-text">Look up</span>
+              <span class="spinner hidden" id="spin-payment"></span>
+            </button>
+          </div>
+          <div id="payment-result" class="result-box hidden"></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="info-box">
+          <p class="info-title">Business Rules</p>
+          <ul class="info-list">
+            <li><span class="dot green"></span>Amount ≤ 100 000 cents → <strong>Authorized</strong></li>
+            <li><span class="dot red"></span>Amount &gt; 100 000 cents → <strong>Declined</strong></li>
+            <li><span class="dot yellow"></span>Payment service down → <strong>503</strong></li>
+            <li><span class="dot gray"></span>Paid orders cannot be cancelled → <strong>409</strong></li>
+          </ul>
+        </div>
+      </div>
+
+    </div><!-- /grid-3 -->
+
+    <!-- ── Activity Log ──────────────────────────────────────────── -->
+    <section class="card log-card">
+      <div class="card-header log-header">
+        <div style="display:flex;align-items:center;gap:.6rem;">
+          <span class="card-icon">📋</span>
+          <h2>Activity Log</h2>
+          <span class="log-count" id="log-count">0 entries</span>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="btn-clear-log">Clear</button>
+      </div>
+      <div class="log-scroll" id="log-scroll">
+        <div class="log-empty" id="log-empty">No activity yet — run a request above to see logs here.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    Order &amp; Payment Platform · Clean Architecture · Go + Gin + PostgreSQL
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
