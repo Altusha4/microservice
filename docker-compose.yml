@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  # ── Databases ────────────────────────────────────────────────────────────────
+
+  order-db:
+    image: postgres:16-alpine
+    container_name: order_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: order_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+      - ./order-service/migrations/001_create_orders.sql:/docker-entrypoint-initdb.d/001_create_orders.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d order_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  payment-db:
+    image: postgres:16-alpine
+    container_name: payment_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: payment_db
+    ports:
+      - "5434:5432"
+    volumes:
+      - payment_db_data:/var/lib/postgresql/data
+      - ./payment-service/migrations/001_create_payments.sql:/docker-entrypoint-initdb.d/001_create_payments.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Services ─────────────────────────────────────────────────────────────────
+
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    container_name: payment_service
+    environment:
+      PAYMENT_DB_DSN: postgres://postgres:postgres@payment-db:5432/payment_db?sslmode=disable
+      PORT: "8081"
+    ports:
+      - "8081:8081"
+    depends_on:
+      payment-db:
+        condition: service_healthy
+
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: order_service
+    environment:
+      ORDER_DB_DSN: postgres://postgres:postgres@order-db:5432/order_db?sslmode=disable
+      PAYMENT_SERVICE_URL: http://payment-service:8081
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      payment-service:
+        condition: service_started
+
+volumes:
+  order_db_data:
+  payment_db_data:
