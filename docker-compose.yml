@@ -1,8 +1,6 @@
 version: "3.9"
 
 services:
-  # ── Databases ────────────────────────────────────────────────────────────────
-
   order-db:
     image: postgres:16-alpine
     container_name: order_db
@@ -39,7 +37,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # ── Services ─────────────────────────────────────────────────────────────────
 
   payment-service:
     build:
