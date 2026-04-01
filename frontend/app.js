@@ -3,8 +3,6 @@
 const API_ORDERS   = '/api/orders';
 const API_PAYMENTS = '/api/payments';
 
-// ── Activity Log ──────────────────────────────────────────────────────────────
-
 let logCount = 0;
 
 function addLog(method, endpoint, status, body) {
@@ -50,8 +48,6 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
-// ── Fetch Wrapper ─────────────────────────────────────────────────────────────
-
 async function apiFetch(method, url, body, headers = {}) {
   const opts = {
     method,
@@ -75,8 +71,6 @@ async function apiFetch(method, url, body, headers = {}) {
   }
 }
 
-// ── Loading Helpers ───────────────────────────────────────────────────────────
-
 function setLoading(btnId, spinId, loading) {
   const btn  = document.getElementById(btnId);
   const spin = document.getElementById(spinId);
@@ -85,8 +79,6 @@ function setLoading(btnId, spinId, loading) {
   spin.classList.toggle('hidden', !loading);
   text.style.opacity = loading ? '.5' : '1';
 }
-
-// ── Result Render ─────────────────────────────────────────────────────────────
 
 function statusColorClass(status) {
   if (!status) return '';
@@ -140,8 +132,6 @@ function renderResult(boxId, httpStatus, data) {
   `;
 }
 
-// ── Section 1 — Create Order ──────────────────────────────────────────────────
-
 document.getElementById('form-create').addEventListener('submit', async (e) => {
   e.preventDefault();
   setLoading('btn-create', 'spin-create', true);
@@ -169,8 +159,6 @@ document.getElementById('form-create').addEventListener('submit', async (e) => {
   }
 });
 
-// ── Section 2 — Get Order ─────────────────────────────────────────────────────
-
 document.getElementById('btn-get-order').addEventListener('click', async () => {
   const id = document.getElementById('getOrderID').value.trim();
   if (!id) return;
@@ -179,8 +167,6 @@ document.getElementById('btn-get-order').addEventListener('click', async () => {
   setLoading('btn-get-order', 'spin-get', false);
   renderResult('get-order-result', status, data);
 });
-
-// ── Section 2 — Cancel Order ──────────────────────────────────────────────────
 
 document.getElementById('btn-cancel-order').addEventListener('click', async () => {
   const id = document.getElementById('cancelOrderID').value.trim();
@@ -191,8 +177,6 @@ document.getElementById('btn-cancel-order').addEventListener('click', async () =
   renderResult('cancel-result', status, data);
 });
 
-// ── Section 3 — Get Payment ───────────────────────────────────────────────────
-
 document.getElementById('btn-get-payment').addEventListener('click', async () => {
   const id = document.getElementById('paymentOrderID').value.trim();
   if (!id) return;
@@ -202,16 +186,12 @@ document.getElementById('btn-get-payment').addEventListener('click', async () =>
   renderResult('payment-result', status, data);
 });
 
-// ── Activity Log — Clear ──────────────────────────────────────────────────────
-
 document.getElementById('btn-clear-log').addEventListener('click', () => {
   const scroll = document.getElementById('log-scroll');
   scroll.innerHTML = '<div class="log-empty" id="log-empty">No activity yet — run a request above to see logs here.</div>';
   logCount = 0;
   document.getElementById('log-count').textContent = '0 entries';
 });
-
-// ── Quick Demo Scenarios ──────────────────────────────────────────────────────
 
 const SCENARIOS = {
   normal: {
@@ -258,8 +238,6 @@ document.querySelectorAll('.scenario-btn').forEach(btn => {
     document.getElementById('card-create').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 });
-
-// ── Enter key on ID inputs ────────────────────────────────────────────────────
 
 document.getElementById('getOrderID').addEventListener('keydown', e => {
   if (e.key === 'Enter') document.getElementById('btn-get-order').click();

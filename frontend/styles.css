@@ -372,7 +372,6 @@ form { display: flex; flex-direction: column; gap: .65rem; }
   overflow-y: auto;
 }
 
-/* ── Action Group & Divider ─────────────────────────────────────────────────── */
 .action-group { display: flex; flex-direction: column; gap: .55rem; }
 
 .divider {
@@ -381,7 +380,6 @@ form { display: flex; flex-direction: column; gap: .65rem; }
   margin: 1rem 0;
 }
 
-/* ── Info Box ───────────────────────────────────────────────────────────────── */
 .info-box {
   background: var(--bg-card-2);
   border: 1px solid var(--border);
@@ -424,7 +422,6 @@ form { display: flex; flex-direction: column; gap: .65rem; }
 .dot.yellow { background: var(--yellow); }
 .dot.gray   { background: var(--gray); }
 
-/* ── Log Card ───────────────────────────────────────────────────────────────── */
 .log-card { padding-bottom: 0; }
 
 .log-header {
@@ -460,7 +457,6 @@ form { display: flex; flex-direction: column; gap: .65rem; }
   font-style: italic;
 }
 
-/* ── Log Entry ──────────────────────────────────────────────────────────────── */
 .log-entry {
   display: flex;
   flex-direction: column;
@@ -543,7 +539,6 @@ form { display: flex; flex-direction: column; gap: .65rem; }
   margin-top: .2rem;
 }
 
-/* ── Footer ─────────────────────────────────────────────────────────────────── */
 .footer {
   text-align: center;
   padding: .9rem 1rem;
@@ -553,13 +548,11 @@ form { display: flex; flex-direction: column; gap: .65rem; }
   background: var(--bg-card);
 }
 
-/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
-/* ── Responsive ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
   .grid-3 { grid-template-columns: repeat(2, 1fr); }
 }
