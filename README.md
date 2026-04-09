@@ -171,33 +171,33 @@ The stream client in Terminal 1 will print the new status as soon as the databas
 
 ```mermaid
 graph TD
-    Browser([Browser<br/>localhost:13000])
+    Browser([Browser\nlocalhost:13000])
 
     subgraph frontend
-        Nginx[nginx<br/>static files + proxy]
+        Nginx[nginx\nstatic files + proxy]
     end
 
     subgraph order-service
-        OH[HTTP Handler<br/>Gin :18080]
+        OH[HTTP Handler\nGin :18080]
         OUC[Order UseCase]
-        OR[(OrderRepository<br/>interface)]
-        ODB[(order_db<br/>PostgreSQL :5433)]
-        GS[gRPC Streaming Server<br/>:50052]
+        OR[(OrderRepository\ninterface)]
+        ODB[(order_db\nPostgreSQL :5433)]
+        GS[gRPC Streaming Server\n:50052]
         GPC[gRPC Payment Client]
     end
 
     subgraph payment-service
-        PH[HTTP Handler<br/>Gin :18081]
+        PH[HTTP Handler\nGin :18081]
         PUC[Payment UseCase]
-        PR[(PaymentRepository<br/>interface)]
-        PDB[(payment_db<br/>PostgreSQL :5434)]
-        PG[gRPC Server<br/>:50051]
+        PR[(PaymentRepository\ninterface)]
+        PDB[(payment_db\nPostgreSQL :5434)]
+        PG[gRPC Server\n:50051]
         LI[Logging Interceptor]
     end
 
-    Browser -->|/api/orders<br/>/api/payments| Nginx
-    Nginx -->|proxy /api/orders → :18080/orders| OH
-    Nginx -->|proxy /api/payments → :18081/payments| PH
+    Browser -->|/api/orders| Nginx
+    Nginx -->|proxy → :18080/orders| OH
+    Nginx -->|proxy → :18081/payments| PH
     OH --> OUC
     OUC --> OR
     OR --> ODB
