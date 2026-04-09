@@ -10,4 +10,5 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /payment-service .
 EXPOSE 8081
+EXPOSE 50051
 CMD ["./payment-service"]

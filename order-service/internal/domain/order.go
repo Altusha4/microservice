@@ -2,12 +2,20 @@ package domain
 
 import "time"
 
+// #######################################
+// ORDER CONSTANTS
+// #######################################
+
 const (
 	StatusPending   = "Pending"
 	StatusPaid      = "Paid"
 	StatusFailed    = "Failed"
 	StatusCancelled = "Cancelled"
 )
+
+// #######################################
+// ORDER MODEL
+// #######################################
 
 type Order struct {
 	ID         string

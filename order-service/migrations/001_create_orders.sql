@@ -1,5 +1,10 @@
--- Migration: 001_create_orders
--- Creates the orders table and idempotency_keys table for the order-service.
+-- #######################################
+-- ORDERS
+-- #######################################
+
+-- ##############################
+-- Orders Table
+-- ##############################
 
 CREATE TABLE IF NOT EXISTS orders (
     id          TEXT        PRIMARY KEY,
@@ -10,9 +15,16 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Stores idempotency keys to prevent duplicate order creation.
--- key is the client-supplied Idempotency-Key header value.
+-- #######################################
+-- IDEMPOTENCY
+-- #######################################
+
+-- ##############################
+-- Idempotency Keys Table
+-- ##############################
+
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     key      TEXT PRIMARY KEY,
     order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE
 );
+

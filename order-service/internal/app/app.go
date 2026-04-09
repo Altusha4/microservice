@@ -12,6 +12,10 @@ import (
 	"github.com/Altusha4/microservice/order-service/internal/usecase"
 )
 
+// #######################################
+// PAYMENT CLIENT
+// #######################################
+
 type HTTPPaymentClient struct {
 	baseURL    string
 	httpClient *http.Client
@@ -68,6 +72,10 @@ func (c *HTTPPaymentClient) ProcessPayment(ctx context.Context, req usecase.Paym
 		TransactionID: respBody.TransactionID,
 	}, nil
 }
+
+// #######################################
+// DATABASE UTILS
+// #######################################
 
 func OpenDB(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)

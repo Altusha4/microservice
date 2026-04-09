@@ -10,4 +10,5 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /order-service .
 EXPOSE 8080
+EXPOSE 50052
 CMD ["./order-service"]
