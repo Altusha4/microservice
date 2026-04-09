@@ -2,7 +2,26 @@
 
 A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles.
 
-Includes a **frontend dashboard** at `http://localhost:3000` for interactive demo during presentations.
+Includes a **frontend dashboard** at `http://localhost:13000` for interactive demo during presentations.
+
+---
+
+## Proto & Generated Code Repositories
+
+| Repository | URL |
+|---|---|
+| **Proto definitions** | https://github.com/Altusha4/ap2-protos |
+| **Generated Go code** | https://github.com/Altusha4/ap2-generated |
+
+---
+
+## What Changed in Assignment 2
+
+- **Order → Payment via gRPC**: Order Service now calls Payment Service over gRPC instead of REST.
+- **Payment Service gRPC server**: Payment Service runs a gRPC server on port `50051` alongside its HTTP server on port `8081`.
+- **Order Service gRPC streaming server**: Order Service runs a gRPC streaming server on port `50052` for real-time order status updates.
+- **Contract-First approach**: `.proto` files live in the [ap2-protos](https://github.com/Altusha4/ap2-protos) repo; auto-generated `.pb.go` files are pushed to the [ap2-generated](https://github.com/Altusha4/ap2-generated) repo via GitHub Actions.
+- **gRPC Logging Interceptor** *(bonus)*: A server-side unary interceptor on Payment Service logs every incoming RPC with the method name and duration.
 
 ---
 
@@ -19,9 +38,11 @@ docker compose up --build
 
 | Service | URL |
 |---|---|
-| **Frontend Dashboard** | http://localhost:3000 |
-| Order Service API | http://localhost:8080 |
-| Payment Service API | http://localhost:8081 |
+| **Frontend Dashboard** | http://localhost:13000 |
+| Order Service API | http://localhost:18080 |
+| Payment Service API | http://localhost:18081 |
+| Order Service gRPC | localhost:50052 |
+| Payment Service gRPC | localhost:50051 |
 | order_db (PostgreSQL) | localhost:5433 |
 | payment_db (PostgreSQL) | localhost:5434 |
 
@@ -100,16 +121,35 @@ Each service has its own domain models, interfaces, and utilities. There is no s
 | **Order** | Lifecycle of a customer purchase: creation, payment orchestration, cancellation | `order_db` (port 5433) |
 | **Payment** | Authorization of a payment transaction for a given order | `payment_db` (port 5434) |
 
-The Order service **orchestrates** the flow: it creates the order, calls the Payment service synchronously via REST, and updates the order status based on the result. The Payment service is stateless with respect to orders — it only decides Authorized/Declined.
+The Order service **orchestrates** the flow: it creates the order, calls the Payment service synchronously via gRPC, and updates the order status based on the result. The Payment service is stateless with respect to orders — it only decides Authorized/Declined.
 
 ---
 
 ## Inter-Service Communication
 
-- **Protocol**: REST over HTTP (synchronous)
-- **Order → Payment**: `POST /payments` with `{"order_id": "...", "amount": 15000}`
-- **HTTP Client Timeout**: 2 seconds (configured in `order-service/internal/app/app.go`)
-- **Failure Handling**: If the Payment service is unreachable or times out, the Order service marks the order as `"Failed"` and returns `503 Service Unavailable` to the caller.
+- **Protocol**: gRPC (synchronous unary RPC)
+- **Order → Payment**: `PaymentService.ProcessPayment` RPC with `order_id` and `amount`
+- **gRPC Address**: Configured via the `PAYMENT_GRPC_ADDR` environment variable (e.g. `payment-service:50051`)
+- **Failure Handling**: If the Payment service is unreachable or the RPC fails, the Order service marks the order as `"Failed"` and returns `503 Service Unavailable` to the caller.
+
+---
+
+## Test Real-time Streaming
+
+Order Service exposes a gRPC server-side streaming endpoint that pushes order status changes in real time.
+
+**Terminal 1 — connect the stream client:**
+```bash
+cd order-service && go run cmd/stream-client/main.go <order-id>
+```
+
+**Terminal 2 — trigger a status change:**
+```bash
+docker exec -it order_db psql -U postgres order_db -c \
+  "UPDATE orders SET status='Cancelled' WHERE id='<order-id>'"
+```
+
+The stream client in Terminal 1 will print the new status as soon as the database row is updated.
 
 ---
 
@@ -131,38 +171,43 @@ The Order service **orchestrates** the flow: it creates the order, calls the Pay
 
 ```mermaid
 graph TD
-    Browser([Browser<br/>localhost:3000])
+    Browser([Browser<br/>localhost:13000])
 
     subgraph frontend
         Nginx[nginx<br/>static files + proxy]
     end
 
     subgraph order-service
-        OH[HTTP Handler<br/>Gin]
+        OH[HTTP Handler<br/>Gin :18080]
         OUC[Order UseCase]
         OR[(OrderRepository<br/>interface)]
         ODB[(order_db<br/>PostgreSQL :5433)]
-        PC[HTTPPaymentClient]
+        GS[gRPC Streaming Server<br/>:50052]
+        GPC[gRPC Payment Client]
     end
 
     subgraph payment-service
-        PH[HTTP Handler<br/>Gin]
+        PH[HTTP Handler<br/>Gin :18081]
         PUC[Payment UseCase]
         PR[(PaymentRepository<br/>interface)]
         PDB[(payment_db<br/>PostgreSQL :5434)]
+        PG[gRPC Server<br/>:50051]
+        LI[Logging Interceptor]
     end
 
     Browser -->|/api/orders<br/>/api/payments| Nginx
-    Nginx -->|proxy /api/orders → :8080/orders| OH
-    Nginx -->|proxy /api/payments → :8081/payments| PH
+    Nginx -->|proxy /api/orders → :18080/orders| OH
+    Nginx -->|proxy /api/payments → :18081/payments| PH
     OH --> OUC
     OUC --> OR
     OR --> ODB
-    OUC -->|POST /payments<br/>2s timeout| PC
-    PC -->|REST| PH
-    PH --> PUC
+    OUC -->|ProcessPayment RPC| GPC
+    GPC -->|gRPC :50051| LI
+    LI --> PG
+    PG --> PUC
     PUC --> PR
     PR --> PDB
+    GS -.->|stream status updates| Browser
 ```
 
 ---
@@ -170,12 +215,12 @@ graph TD
 
 ## API Reference
 
-### Order Service (`localhost:8080`)
+### Order Service (`localhost:18080`)
 
 #### Create Order
 
 ```bash
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18080/orders \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id-1" \
   -d '{"customer_id": "cust-123", "item_name": "Laptop", "amount": 15000}'
@@ -196,13 +241,13 @@ curl -X POST http://localhost:8080/orders \
 #### Get Order
 
 ```bash
-curl http://localhost:8080/orders/550e8400-e29b-41d4-a716-446655440000
+curl http://localhost:18080/orders/550e8400-e29b-41d4-a716-446655440000
 ```
 
 #### Cancel Order
 
 ```bash
-curl -X PATCH http://localhost:8080/orders/550e8400-e29b-41d4-a716-446655440000/cancel
+curl -X PATCH http://localhost:18080/orders/550e8400-e29b-41d4-a716-446655440000/cancel
 ```
 
 **Error (409) — paid order:**
@@ -213,7 +258,7 @@ curl -X PATCH http://localhost:8080/orders/550e8400-e29b-41d4-a716-446655440000/
 #### Test Payment Decline (amount > 100000)
 
 ```bash
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18080/orders \
   -H "Content-Type: application/json" \
   -d '{"customer_id": "cust-456", "item_name": "Yacht", "amount": 999999}'
 ```
@@ -229,12 +274,12 @@ curl -X POST http://localhost:8080/orders \
 
 ---
 
-### Payment Service (`localhost:8081`)
+### Payment Service (`localhost:18081`)
 
 #### Process Payment
 
 ```bash
-curl -X POST http://localhost:8081/payments \
+curl -X POST http://localhost:18081/payments \
   -H "Content-Type: application/json" \
   -d '{"order_id": "550e8400-e29b-41d4-a716-446655440000", "amount": 15000}'
 ```
@@ -253,7 +298,7 @@ curl -X POST http://localhost:8081/payments \
 #### Get Payment by Order ID
 
 ```bash
-curl http://localhost:8081/payments/550e8400-e29b-41d4-a716-446655440000
+curl http://localhost:18081/payments/550e8400-e29b-41d4-a716-446655440000
 ```
 
 ---
@@ -264,13 +309,13 @@ curl http://localhost:8081/payments/550e8400-e29b-41d4-a716-446655440000
 
 ```bash
 # First call — creates order
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18080/orders \
   -H "Idempotency-Key: req-abc-123" \
   -H "Content-Type: application/json" \
   -d '{"customer_id": "cust-1", "item_name": "Book", "amount": 2500}'
 
 # Retry — returns the same order, no duplicate
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18080/orders \
   -H "Idempotency-Key: req-abc-123" \
   -H "Content-Type: application/json" \
   -d '{"customer_id": "cust-1", "item_name": "Book", "amount": 2500}'
