@@ -10,6 +10,10 @@ import (
 	"github.com/Altusha4/microservice/order-service/internal/domain"
 )
 
+// #######################################
+// ORDER REPOSITORY
+// #######################################
+
 type OrderRepo struct {
 	db *sql.DB
 }
@@ -17,6 +21,10 @@ type OrderRepo struct {
 func NewOrderRepo(db *sql.DB) *OrderRepo {
 	return &OrderRepo{db: db}
 }
+
+// ##############################
+// Create
+// ##############################
 
 func (r *OrderRepo) Create(ctx context.Context, order *domain.Order) error {
 	query := `
@@ -31,6 +39,10 @@ func (r *OrderRepo) Create(ctx context.Context, order *domain.Order) error {
 	}
 	return nil
 }
+
+// ##############################
+// GetByID
+// ##############################
 
 func (r *OrderRepo) GetByID(ctx context.Context, id string) (*domain.Order, error) {
 	query := `
@@ -51,6 +63,10 @@ func (r *OrderRepo) GetByID(ctx context.Context, id string) (*domain.Order, erro
 	return &o, nil
 }
 
+// ##############################
+// UpdateStatus
+// ##############################
+
 func (r *OrderRepo) UpdateStatus(ctx context.Context, id, status string) error {
 	query := `UPDATE orders SET status = $1 WHERE id = $2`
 	result, err := r.db.ExecContext(ctx, query, status, id)
@@ -66,6 +82,10 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, id, status string) error {
 	}
 	return nil
 }
+
+// ##############################
+// GetByIdempotencyKey
+// ##############################
 
 func (r *OrderRepo) GetByIdempotencyKey(ctx context.Context, key string) (*domain.Order, error) {
 	query := `
@@ -87,6 +107,10 @@ func (r *OrderRepo) GetByIdempotencyKey(ctx context.Context, key string) (*domai
 	o.CreatedAt = createdAt
 	return &o, nil
 }
+
+// ##############################
+// SaveIdempotencyKey
+// ##############################
 
 func (r *OrderRepo) SaveIdempotencyKey(ctx context.Context, key, orderID string) error {
 	query := `INSERT INTO idempotency_keys (key, order_id) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`

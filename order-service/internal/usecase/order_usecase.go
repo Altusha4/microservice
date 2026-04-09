@@ -11,10 +11,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// #######################################
+// ERRORS
+// #######################################
+
 var ErrOrderNotFound = errors.New("order not found")
 var ErrCannotCancelPaidOrder = errors.New("paid orders cannot be cancelled")
 var ErrInvalidAmount = errors.New("amount must be greater than 0")
 var ErrPaymentServiceUnavailable = errors.New("payment service unavailable")
+
+// #######################################
+// PAYMENT TYPES
+// #######################################
 
 type PaymentRequest struct {
 	OrderID string
@@ -30,6 +38,10 @@ type PaymentClient interface {
 	ProcessPayment(ctx context.Context, req PaymentRequest) (*PaymentResponse, error)
 }
 
+// #######################################
+// ORDER USECASE
+// #######################################
+
 type OrderUseCase struct {
 	repo          repository.OrderRepository
 	paymentClient PaymentClient
@@ -39,10 +51,23 @@ func NewOrderUseCase(repo repository.OrderRepository, pc PaymentClient) *OrderUs
 	return &OrderUseCase{repo: repo, paymentClient: pc}
 }
 
+// ##############################
+// CreateOrder
+// ##############################
+
 func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName string, amount int64, idempotencyKey string) (*domain.Order, error) {
+
+	// ####################
+	// Validation
+	// ####################
+
 	if amount <= 0 {
 		return nil, ErrInvalidAmount
 	}
+
+	// ####################
+	// Idempotency check
+	// ####################
 
 	if idempotencyKey != "" {
 		existing, err := uc.repo.GetByIdempotencyKey(ctx, idempotencyKey)
@@ -54,6 +79,10 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 		}
 	}
 
+	// ####################
+	// Create order object
+	// ####################
+
 	order := &domain.Order{
 		ID:         uuid.New().String(),
 		CustomerID: customerID,
@@ -62,6 +91,10 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 		Status:     domain.StatusPending,
 		CreatedAt:  time.Now().UTC(),
 	}
+
+	// ####################
+	// Persist order
+	// ####################
 
 	if err := uc.repo.Create(ctx, order); err != nil {
 		return nil, fmt.Errorf("persist order: %w", err)
@@ -73,6 +106,10 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 		}
 	}
 
+	// ####################
+	// Process payment
+	// ####################
+
 	payResp, err := uc.paymentClient.ProcessPayment(ctx, PaymentRequest{
 		OrderID: order.ID,
 		Amount:  order.Amount,
@@ -82,6 +119,10 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 		order.Status = domain.StatusFailed
 		return order, ErrPaymentServiceUnavailable
 	}
+
+	// ####################
+	// Status Update
+	// ####################
 
 	newStatus := domain.StatusPaid
 	if payResp.Status == "Declined" {
@@ -96,6 +137,10 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 	return order, nil
 }
 
+// ##############################
+// GetOrder
+// ##############################
+
 func (uc *OrderUseCase) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
 	order, err := uc.repo.GetByID(ctx, id)
 	if err != nil {
@@ -106,6 +151,10 @@ func (uc *OrderUseCase) GetOrder(ctx context.Context, id string) (*domain.Order,
 	}
 	return order, nil
 }
+
+// ##############################
+// CancelOrder
+// ##############################
 
 func (uc *OrderUseCase) CancelOrder(ctx context.Context, id string) error {
 	order, err := uc.repo.GetByID(ctx, id)
