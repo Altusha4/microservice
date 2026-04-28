@@ -25,8 +25,9 @@ func NewGRPCPaymentClient(addr string) (*GRPCPaymentClient, error) {
 
 func (c *GRPCPaymentClient) ProcessPayment(ctx context.Context, req usecase.PaymentRequest) (*usecase.PaymentResponse, error) {
 	resp, err := c.client.ProcessPayment(ctx, &pb.PaymentRequest{
-		OrderId: req.OrderID,
-		Amount:  req.Amount,
+		OrderId:       req.OrderID,
+		Amount:        req.Amount,
+		CustomerEmail: req.CustomerEmail,
 	})
 	if err != nil {
 		st, _ := status.FromError(err)
