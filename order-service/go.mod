@@ -3,7 +3,7 @@ module github.com/Altusha4/microservice/order-service
 go 1.23
 
 require (
-	github.com/Altusha4/ap2-generated v1.0.0
+	github.com/Altusha4/ap2-generated v1.1.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
