@@ -3,8 +3,10 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"sync"
 
 	"github.com/Altusha4/microservice/notification-service/internal/domain"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -14,20 +16,27 @@ import (
 // CONSUMER
 // #######################################
 
-// Handler is the business-level callback the consumer invokes for
-// every successfully decoded event. The consumer manages ACK/NACK;
-// the handler only decides "done" or "error".
+const MaxDeliveryAttempts = 3
+
+// ErrPermanent — handler decided no retry will help. Message goes
+// straight to DLQ on the first failure.
+var ErrPermanent = errors.New("permanent processing error")
+
 type Handler func(ctx context.Context, event domain.PaymentCompletedEvent) error
 
 type Consumer struct {
 	conn *amqp.Connection
 	ch   *amqp.Channel
+
+	// In-process retry counter keyed by MessageId.
+	// Cannot rely on x-death header because Nack(requeue=true)
+	// returns the message to the same queue without dead-lettering,
+	// so x-death is never stamped. Counting in memory survives
+	// perfectly within one consumer instance.
+	mu       sync.Mutex
+	attempts map[string]int
 }
 
-// NewConsumer opens a channel, declares topology and sets QoS=1
-// so RabbitMQ delivers one message at a time per consumer —
-// keeps memory bounded and prevents one slow handler from
-// hoarding hundreds of unacked messages.
 func NewConsumer(conn *amqp.Connection) (*Consumer, error) {
 	ch, err := conn.Channel()
 	if err != nil {
@@ -37,31 +46,24 @@ func NewConsumer(conn *amqp.Connection) (*Consumer, error) {
 		_ = ch.Close()
 		return nil, err
 	}
-	// prefetch=1 — deliver one message, wait for ACK before sending the next.
 	if err := ch.Qos(1, 0, false); err != nil {
 		_ = ch.Close()
 		return nil, fmt.Errorf("set qos: %w", err)
 	}
-	return &Consumer{conn: conn, ch: ch}, nil
+	return &Consumer{
+		conn:     conn,
+		ch:       ch,
+		attempts: make(map[string]int),
+	}, nil
 }
 
-// Run blocks until ctx is cancelled. For every delivery it:
-//   - decodes JSON
-//   - calls handler
-//   - ACKs on success, NACKs (without requeue) on permanent error
-//   - NACKs (with requeue) on transient error so the broker redelivers
-//
-// AutoAck is OFF — this is the key reliability requirement.
 func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 	deliveries, err := c.ch.ConsumeWithContext(
 		ctx,
-		QueueCompleted,         // queue
-		"notification-service", // consumer tag
-		false,                  // autoAck = false → MANUAL ACK
-		false,                  // exclusive
-		false,                  // no-local
-		false,                  // no-wait
-		nil,                    // args
+		QueueCompleted,
+		"notification-service",
+		false, // autoAck = false → MANUAL ACK
+		false, false, false, nil,
 	)
 	if err != nil {
 		return fmt.Errorf("start consume: %w", err)
@@ -74,49 +76,79 @@ func (c *Consumer) Run(ctx context.Context, handler Handler) error {
 		case <-ctx.Done():
 			log.Println("[notification] consumer stopping (context cancelled)")
 			return nil
-
 		case d, ok := <-deliveries:
 			if !ok {
-				// Channel closed by broker — return so main can decide
-				// to reconnect or shut down.
 				return fmt.Errorf("delivery channel closed")
 			}
-
 			c.handleDelivery(ctx, d, handler)
 		}
 	}
 }
 
-// handleDelivery processes a single message.
-// All paths must end with either Ack or Nack — never leave a delivery
-// unacked, otherwise RabbitMQ holds it forever.
+// handleDelivery — single-message lifecycle.
+//
+// Decision tree:
+//  1. Bad JSON                     -> Nack(requeue=false) -> DLQ
+//  2. ErrPermanent                 -> Nack(requeue=false) -> DLQ
+//  3. Other error, attempts < N    -> Nack(requeue=true)
+//  4. Other error, attempts >= N   -> Nack(requeue=false) -> DLQ + clear counter
+//  5. Success                      -> Ack + clear counter
 func (c *Consumer) handleDelivery(ctx context.Context, d amqp.Delivery, handler Handler) {
 	var event domain.PaymentCompletedEvent
 	if err := json.Unmarshal(d.Body, &event); err != nil {
-		// Broken JSON — never going to succeed on retry.
-		// Drop the message (in the bonus step, this becomes "send to DLQ").
-		log.Printf("[notification][error] decode body: %v — discarding", err)
+		log.Printf("[notification][error] decode body: %v - dead-lettering", err)
 		_ = d.Nack(false, false)
 		return
 	}
 
-	if err := handler(ctx, event); err != nil {
-		// Transient error (e.g. DB temporarily down) — requeue so we retry.
-		// In the DLQ bonus step we'll cap retries; for the base milestone
-		// we just keep retrying.
-		log.Printf("[notification][error] handler failed for %s: %v — requeueing", event.EventID, err)
+	key := d.MessageId
+	if key == "" {
+		key = event.EventID
+	}
+
+	err := handler(ctx, event)
+	if err == nil {
+		c.clearAttempts(key)
+		if ackErr := d.Ack(false); ackErr != nil {
+			log.Printf("[notification][error] ack failed for %s: %v", event.EventID, ackErr)
+		}
+		return
+	}
+
+	if errors.Is(err, ErrPermanent) {
+		c.clearAttempts(key)
+		log.Printf("[notification][permanent] event %s: %v - dead-lettering", event.EventID, err)
+		_ = d.Nack(false, false)
+		return
+	}
+
+	attempt := c.bumpAttempts(key)
+	if attempt < MaxDeliveryAttempts {
+		log.Printf("[notification][retry %d/%d] event %s: %v - requeueing",
+			attempt, MaxDeliveryAttempts, event.EventID, err)
 		_ = d.Nack(false, true)
 		return
 	}
 
-	// Manual ACK — only after the handler reported success
-	// (which means the email was logged AND idempotency row committed).
-	if err := d.Ack(false); err != nil {
-		log.Printf("[notification][error] ack failed for %s: %v", event.EventID, err)
-	}
+	c.clearAttempts(key)
+	log.Printf("[notification][give-up] event %s exhausted %d attempts: %v - dead-lettering",
+		event.EventID, MaxDeliveryAttempts, err)
+	_ = d.Nack(false, false)
 }
 
-// Close shuts the channel and connection cleanly.
+func (c *Consumer) bumpAttempts(key string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.attempts[key]++
+	return c.attempts[key]
+}
+
+func (c *Consumer) clearAttempts(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.attempts, key)
+}
+
 func (c *Consumer) Close() error {
 	if c.ch != nil {
 		_ = c.ch.Close()

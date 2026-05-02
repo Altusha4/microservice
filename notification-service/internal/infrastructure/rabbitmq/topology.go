@@ -9,48 +9,65 @@ import (
 // #######################################
 // TOPOLOGY CONSTANTS
 // #######################################
+// Must match payment-service exactly — Rabbit will reject mismatched
+// re-declarations with PRECONDITION_FAILED.
 
 const (
 	ExchangePayments    = "payments"
 	RoutingKeyCompleted = "payment.completed"
 	QueueCompleted      = "payment.completed"
+
+	ExchangeDLX    = "payments.dlx"
+	RoutingKeyDead = "payment.completed.dead"
+	QueueDLQ       = "payment.completed.dlq"
 )
 
-// DeclareTopology — same shape as in payment-service.
-// Both sides declare it; whoever boots first wins, the other
-// is a no-op (declarations must be identical).
+// DeclareTopology declares the main and the dead-letter setup.
+// Idempotent: same call from producer and consumer is fine,
+// as long as arguments match exactly.
 //
-// Durable so messages survive a broker restart.
+// Flow on permanent failure:
+//
+//	payment.completed --(Nack requeue=false)-->
+//	  -> x-dead-letter-exchange  = payments.dlx
+//	  -> x-dead-letter-routing-key = payment.completed.dead
+//	  -> bound to QueueDLQ
 func DeclareTopology(ch *amqp.Channel) error {
 	if err := ch.ExchangeDeclare(
-		ExchangePayments,
-		"direct",
-		true,  // durable
-		false, // auto-delete
-		false, // internal
-		false, // no-wait
-		nil,
+		ExchangePayments, "direct", true, false, false, false, nil,
 	); err != nil {
-		return fmt.Errorf("declare exchange: %w", err)
+		return fmt.Errorf("declare main exchange: %w", err)
+	}
+	if err := ch.ExchangeDeclare(
+		ExchangeDLX, "direct", true, false, false, false, nil,
+	); err != nil {
+		return fmt.Errorf("declare dlx: %w", err)
 	}
 	if _, err := ch.QueueDeclare(
-		QueueCompleted,
-		true,  // durable
-		false, // auto-delete
-		false, // exclusive
-		false, // no-wait
-		nil,
+		QueueDLQ, true, false, false, false, nil,
 	); err != nil {
-		return fmt.Errorf("declare queue: %w", err)
+		return fmt.Errorf("declare dlq: %w", err)
 	}
 	if err := ch.QueueBind(
-		QueueCompleted,
-		RoutingKeyCompleted,
-		ExchangePayments,
-		false,
-		nil,
+		QueueDLQ, RoutingKeyDead, ExchangeDLX, false, nil,
 	); err != nil {
-		return fmt.Errorf("bind queue: %w", err)
+		return fmt.Errorf("bind dlq: %w", err)
 	}
+
+	mainArgs := amqp.Table{
+		"x-dead-letter-exchange":    ExchangeDLX,
+		"x-dead-letter-routing-key": RoutingKeyDead,
+	}
+	if _, err := ch.QueueDeclare(
+		QueueCompleted, true, false, false, false, mainArgs,
+	); err != nil {
+		return fmt.Errorf("declare main queue: %w", err)
+	}
+	if err := ch.QueueBind(
+		QueueCompleted, RoutingKeyCompleted, ExchangePayments, false, nil,
+	); err != nil {
+		return fmt.Errorf("bind main queue: %w", err)
+	}
+
 	return nil
 }
