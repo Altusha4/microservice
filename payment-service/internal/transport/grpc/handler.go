@@ -27,7 +27,7 @@ func (h *PaymentGRPCHandler) ProcessPayment(ctx context.Context, req *pb.Payment
 		return nil, status.Error(codes.InvalidArgument, "amount must be greater than 0")
 	}
 
-	payment, err := h.paymentUC.ProcessPayment(ctx, req.OrderId, req.Amount)
+	payment, err := h.paymentUC.ProcessPayment(ctx, req.OrderId, req.Amount, req.CustomerEmail)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "process payment: %v", err)
 	}

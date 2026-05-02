@@ -25,8 +25,9 @@ var ErrPaymentServiceUnavailable = errors.New("payment service unavailable")
 // #######################################
 
 type PaymentRequest struct {
-	OrderID string
-	Amount  int64
+	OrderID       string
+	Amount        int64
+	CustomerEmail string
 }
 
 type PaymentResponse struct {
@@ -55,7 +56,12 @@ func NewOrderUseCase(repo repository.OrderRepository, pc PaymentClient) *OrderUs
 // CreateOrder
 // ##############################
 
-func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName string, amount int64, idempotencyKey string) (*domain.Order, error) {
+func (uc *OrderUseCase) CreateOrder(
+	ctx context.Context,
+	customerID, customerEmail, itemName string,
+	amount int64,
+	idempotencyKey string,
+) (*domain.Order, error) {
 
 	// ####################
 	// Validation
@@ -84,12 +90,13 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 	// ####################
 
 	order := &domain.Order{
-		ID:         uuid.New().String(),
-		CustomerID: customerID,
-		ItemName:   itemName,
-		Amount:     amount,
-		Status:     domain.StatusPending,
-		CreatedAt:  time.Now().UTC(),
+		ID:            uuid.New().String(),
+		CustomerID:    customerID,
+		CustomerEmail: customerEmail,
+		ItemName:      itemName,
+		Amount:        amount,
+		Status:        domain.StatusPending,
+		CreatedAt:     time.Now().UTC(),
 	}
 
 	// ####################
@@ -111,8 +118,9 @@ func (uc *OrderUseCase) CreateOrder(ctx context.Context, customerID, itemName st
 	// ####################
 
 	payResp, err := uc.paymentClient.ProcessPayment(ctx, PaymentRequest{
-		OrderID: order.ID,
-		Amount:  order.Amount,
+		OrderID:       order.ID,
+		Amount:        order.Amount,
+		CustomerEmail: order.CustomerEmail,
 	})
 	if err != nil {
 		_ = uc.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed)

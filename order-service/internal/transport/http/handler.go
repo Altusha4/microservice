@@ -24,28 +24,31 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 }
 
 type createOrderRequest struct {
-	CustomerID string `json:"customer_id" binding:"required"`
-	ItemName   string `json:"item_name"   binding:"required"`
-	Amount     int64  `json:"amount"      binding:"required,gt=0"`
+	CustomerID    string `json:"customer_id"    binding:"required"`
+	CustomerEmail string `json:"customer_email" binding:"required,email"`
+	ItemName      string `json:"item_name"      binding:"required"`
+	Amount        int64  `json:"amount"         binding:"required,gt=0"`
 }
 
 type orderResponse struct {
-	ID         string `json:"id"`
-	CustomerID string `json:"customer_id"`
-	ItemName   string `json:"item_name"`
-	Amount     int64  `json:"amount"`
-	Status     string `json:"status"`
-	CreatedAt  string `json:"created_at"`
+	ID            string `json:"id"`
+	CustomerID    string `json:"customer_id"`
+	CustomerEmail string `json:"customer_email"`
+	ItemName      string `json:"item_name"`
+	Amount        int64  `json:"amount"`
+	Status        string `json:"status"`
+	CreatedAt     string `json:"created_at"`
 }
 
 func toOrderResponse(o *domain.Order) orderResponse {
 	return orderResponse{
-		ID:         o.ID,
-		CustomerID: o.CustomerID,
-		ItemName:   o.ItemName,
-		Amount:     o.Amount,
-		Status:     o.Status,
-		CreatedAt:  o.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:            o.ID,
+		CustomerID:    o.CustomerID,
+		CustomerEmail: o.CustomerEmail,
+		ItemName:      o.ItemName,
+		Amount:        o.Amount,
+		Status:        o.Status,
+		CreatedAt:     o.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }
 
@@ -58,7 +61,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 
 	idempotencyKey := c.GetHeader("Idempotency-Key")
 
-	order, err := h.orderUC.CreateOrder(c.Request.Context(), req.CustomerID, req.ItemName, req.Amount, idempotencyKey)
+	order, err := h.orderUC.CreateOrder(
+		c.Request.Context(),
+		req.CustomerID,
+		req.CustomerEmail,
+		req.ItemName,
+		req.Amount,
+		idempotencyKey,
+	)
 	if err != nil {
 		if errors.Is(err, usecase.ErrPaymentServiceUnavailable) {
 			resp := gin.H{"error": "payment service unavailable"}

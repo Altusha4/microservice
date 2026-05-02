@@ -1,31 +1,235 @@
-# Order & Payment Platform
+# Order, Payment & Notification Platform
 
-A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles.
+A Go microservice platform built across three Advanced Programming 2 assignments. Each assignment adds one architectural pattern on top of the previous one:
 
-Includes a **frontend dashboard** at `http://localhost:3000` for interactive demo during presentations.
+| Assignment | Theme | What was added |
+|---|---|---|
+| 1 | REST + Postgres | Two services with HTTP APIs, Clean Architecture |
+| 2 | Synchronous gRPC | Order ↔ Payment over gRPC, contract-first protos, streaming server |
+| **3** | **Event-Driven (RabbitMQ)** | **Notification Service consumer, durable queues, manual ACKs, idempotency, DLQ** |
+
+The frontend dashboard from Assignment 2 still works at <http://localhost:13000>.
 
 ---
 
-## Getting Started
+# Assignment 3 — Event-Driven Notifications
 
-### Prerequisites
-- Docker & Docker Compose
+> Author: Altynay Yertay · AITU Spring 2026
 
-### Run everything (all services + dashboard)
+After a successful payment is committed to the database, **Payment Service** publishes a `payment.completed` event to a durable RabbitMQ exchange. **Notification Service** consumes the event with manual acknowledgements, deduplicates it via a Postgres-backed `processed_events` table, and "sends an email" (logs to stdout). Permanent failures land in a Dead Letter Queue after a bounded retry budget.
+
+## Architecture (event flow)
+
+```mermaid
+flowchart LR
+    User([User / Frontend])
+
+    subgraph Order["order-service"]
+        OrderAPI[HTTP API :8080]
+        OrderDB[(order_db)]
+    end
+
+    subgraph Payment["payment-service"]
+        PayGRPC[gRPC :50051]
+        PayUC[ProcessPayment usecase]
+        PayDB[(payment_db)]
+        PayPub[RabbitMQ Publisherpublisher confirms]
+    end
+
+    subgraph RMQ["RabbitMQ broker"]
+        ExMain([exchangepaymentsdirect, durable])
+        QMain[[queuepayment.completeddurable, x-DLX]]
+        ExDLX([exchangepayments.dlxdirect, durable])
+        QDLQ[[queuepayment.completed.dlqdurable]]
+    end
+
+    subgraph Notify["notification-service"]
+        NConsumer[Consumermanual ACK, prefetch=1]
+        NUC[HandlePaymentCompleted]
+        NDB[(notification_dbprocessed_events)]
+    end
+
+    User -- "POST /orders" --> OrderAPI
+    OrderAPI  OrderDB
+    OrderAPI -- "gRPC ProcessPayment" --> PayGRPC
+    PayGRPC --> PayUC
+    PayUC -- "INSERT + commit" --> PayDB
+    PayUC -- "publish event" --> PayPub
+    PayPub -- "JSON, persistent" --> ExMain
+    ExMain -- "rk: payment.completed" --> QMain
+    QMain -- "deliver" --> NConsumer
+    NConsumer --> NUC
+    NUC -- "INSERT ON CONFLICT DO NOTHING" --> NDB
+    NUC -- "log: Sent email to ..." --> NConsumer
+    NConsumer -. "Nack(requeue=false)after 3 retries" .-> ExDLX
+    ExDLX -- "rk: payment.completed.dead" --> QDLQ
+
+    classDef db fill:#fef3c7,stroke:#92400e
+    classDef queue fill:#dbeafe,stroke:#1e3a8a
+    classDef ex fill:#dcfce7,stroke:#166534
+    class OrderDB,PayDB,NDB db
+    class QMain,QDLQ queue
+    class ExMain,ExDLX ex
+```
+
+## Reliability — how each requirement is met
+
+### Manual acknowledgements
+`notification-service/internal/infrastructure/rabbitmq/consumer.go` calls `Consume` with `autoAck = false`. Every delivery ends with exactly one of `Ack`, `Nack(requeue=true)` or `Nack(requeue=false)`. The acknowledgement is sent **only after** the handler reports success — meaning the idempotency row was committed and the email was logged. If the consumer crashes mid-message, RabbitMQ redelivers the unacked message.
+
+### Durability
+- Both exchanges (`payments`, `payments.dlx`) are declared `durable: true`.
+- Both queues (`payment.completed`, `payment.completed.dlq`) are declared `durable: true`.
+- Every `Publishing` is sent with `DeliveryMode: amqp.Persistent` (=2).
+- The broker's data directory is on a named Docker volume (`rabbitmq_data`).
+
+The combination of durable queues + persistent messages + named volume means a `docker restart rabbitmq` does not lose any in-flight events.
+
+### Publisher reliability
+`payment-service/internal/infrastructure/rabbitmq/publisher.go` enables **publisher confirms** (`ch.Confirm(false)`) and uses `PublishWithDeferredConfirmWithContext`. The publish call blocks until the broker explicitly confirms the message, giving us at-least-once delivery on the producer side.
+
+### Idempotent consumer
+The consumer must tolerate duplicate deliveries. Each `event_id` is treated as a one-shot key:
+
+```sql
+INSERT INTO processed_events (event_id) VALUES ($1)
+ON CONFLICT (event_id) DO NOTHING
+```
+
+`MarkProcessed` returns `(inserted bool, err error)`. If `inserted == false`, it's a duplicate — the handler logs and returns `nil`, the message is `Ack`'d, no email is "sent" again. The check is **atomic at the database level**, so even concurrent consumers can't double-process. This is more robust than an in-memory map, which would forget every event on restart.
+
+### Graceful shutdown
+Both Go services use `signal.NotifyContext(ctx, SIGINT, SIGTERM)`:
+- `payment-service` stops accepting new HTTP/gRPC requests, drains in-flight ones with a 10s timeout, then closes the publisher channel and AMQP connection.
+- `notification-service` cancels the consume context, the delivery channel returns, the consumer loop exits, the channel and connection are closed cleanly.
+
+No message is left unacked because of an abrupt close, no DB connection is leaked.
+
+### Separation of Concerns
+The use case in each service depends only on **interfaces** — repositories and `EventPublisher`. The RabbitMQ adapter lives in `internal/infrastructure/rabbitmq/`, which is the only package that imports `amqp091-go`. Messaging logic is testable and swappable without touching business code.
+
+## Dead Letter Queue (bonus +10%)
+
+**Topology** — `payment.completed` is declared with arguments:
+
+```
+x-dead-letter-exchange:    payments.dlx
+x-dead-letter-routing-key: payment.completed.dead
+```
+
+`payments.dlx` is bound to `payment.completed.dlq`.
+
+**Retry logic** in `consumer.go`:
+
+| Situation | Action |
+|---|---|
+| `attempts < 3` (transient error) | `Nack(requeue=true)` → back to main queue |
+| `attempts ≥ 3` | `Nack(requeue=false)` → DLX → DLQ |
+| `ErrPermanent` from handler | `Nack(requeue=false)` → DLQ immediately |
+| Malformed JSON | `Nack(requeue=false)` → DLQ immediately |
+
+Attempts are tracked in-process by `MessageId` under a mutex. We don't rely on the AMQP `x-death` header for counting because RabbitMQ only stamps it on dead-letter, not on plain `Nack(requeue=true)`.
+
+### DLQ demo
+
+Send any order with `customer_email = "fail@test.com"`. The handler returns a transient error every time:
+
+```bash
+curl -X POST http://localhost:18080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id":"x","customer_email":"fail@test.com","item_name":"BadOrder","amount":4999}'
+```
+
+Notification Service logs:
+
+```
+[notification][retry 1/3] event ... — requeueing
+[notification][retry 2/3] event ... — requeueing
+[notification][retry 3/3] event ... — requeueing
+[notification][give-up]   event ... exhausted 3 attempts — dead-lettering
+```
+
+In the RabbitMQ UI (<http://localhost:15672>, `guest`/`guest`) → **Queues** → `payment.completed.dlq` → **Ready: 1**. Click *Get Message(s)* — the original payload is there with an `x-death` header populated by RabbitMQ documenting why it landed.
+
+## Event payload
+
+`payment.completed` (JSON, persistent, `application/json`):
+
+```json
+{
+  "event_id":       "uuid-v4",
+  "order_id":       "uuid-v4",
+  "amount":         9999,
+  "customer_email": "alice@example.com",
+  "status":         "Authorized",
+  "occurred_at":    "2026-04-28T18:33:12Z"
+}
+```
+
+`event_id` is a fresh UUID per publish — the deduplication key on the consumer side. The same value is set as `MessageId` on the AMQP frame so it can drive the retry counter.
+
+## New service: notification-service
+
+| | |
+|---|---|
+| Tech | Go 1.23, `github.com/rabbitmq/amqp091-go`, Postgres |
+| Network ports | none (consumer-only — does not listen) |
+| Database | `notification_db` on `localhost:5435` (only `processed_events` table) |
+| Depends on | `rabbitmq`, `notification-db` |
+
+It deliberately does **not** import payment-service's types. The event payload is reproduced as an independent struct (`notification-service/internal/domain/event.go`), enforcing decoupling at compile time.
+
+## Quick start (Assignment 3)
 
 ```bash
 docker compose up --build
 ```
 
+Wait for `[notification] consumer started, waiting for messages...`, then:
+
+```bash
+# Happy path
+curl -X POST http://localhost:18080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id":"cust-1","customer_email":"alice@example.com","item_name":"MacBook","amount":9999}'
+```
+
+Expected log line in `notification_service`:
+
+```
+[Notification] Sent email to alice@example.com for Order #<uuid>. Amount: $99.99
+```
+
+To trigger the DLQ flow, use `customer_email: "fail@test.com"` (see DLQ demo above).
+
 | Service | URL |
 |---|---|
-| **Frontend Dashboard** | http://localhost:3000 |
-| Order Service API | http://localhost:8080 |
-| Payment Service API | http://localhost:8081 |
-| order_db (PostgreSQL) | localhost:5433 |
-| payment_db (PostgreSQL) | localhost:5434 |
+| RabbitMQ Management UI | <http://localhost:15672> (`guest` / `guest`) |
+| `notification_db` (Postgres) | `localhost:5435` |
+| Frontend Dashboard | <http://localhost:13000> |
+| Order Service API | <http://localhost:18080> |
+| Payment Service API | <http://localhost:18081> |
 
 ---
+
+# Assignment 2 — gRPC between Order and Payment
+
+A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles. Includes a frontend dashboard at <http://localhost:13000> for interactive demo during presentations.
+
+## Proto & Generated Code Repositories
+
+| Repository | URL |
+|---|---|
+| Proto definitions | <https://github.com/Altusha4/ap2-protos> |
+| Generated Go code | <https://github.com/Altusha4/ap2-generated> |
+
+## What changed in Assignment 2
+
+- **Order → Payment via gRPC**: Order Service now calls Payment Service over gRPC instead of REST.
+- **Payment Service gRPC server**: runs on port 50051 alongside its HTTP server on port 8081.
+- **Order Service gRPC streaming server**: runs on port 50052 for real-time order status updates.
+- **Contract-First approach**: `.proto` files live in `ap2-protos`; auto-generated `.pb.go` files are pushed to `ap2-generated` via GitHub Actions.
+- **gRPC Logging Interceptor (bonus)**: server-side unary interceptor on Payment Service logs every incoming RPC with the method name and duration.
 
 ## Frontend Dashboard
 
@@ -35,35 +239,23 @@ The dashboard is a single-page app served by nginx that proxies all API calls to
 
 | Section | Description |
 |---|---|
-| **Quick Demo** | One-click buttons that prefill the form with test scenarios |
-| **Create Order** | Form with Customer ID, Item Name, Amount (cents), optional Idempotency-Key |
-| **Order Actions** | Get order by ID; cancel order (demonstrates 409 for paid orders) |
-| **Payment Lookup** | Retrieve payment status by order ID |
-| **Activity Log** | Real-time log of every request — method, endpoint, status code, collapsible body |
+| Quick Demo | One-click buttons that prefill the form with test scenarios |
+| Create Order | Form with Customer ID, Item Name, Amount (cents), optional Idempotency-Key |
+| Order Actions | Get order by ID; cancel order (demonstrates 409 for paid orders) |
+| Payment Lookup | Retrieve payment status by order ID |
+| Activity Log | Real-time log of every request — method, endpoint, status code, collapsible body |
 
 ### Quick Demo Scenarios
 
 | Button | Amount | Expected Result |
 |---|---|---|
-| Normal Order ($150) | 15 000 | Status: **Paid** |
-| Over Limit ($1 500) | 150 000 | Payment **Declined** → Order **Failed** |
-| Tiny Order ($1) | 100 | Status: **Paid** |
-| Zero Amount | 0 | **400** Bad Request |
+| Normal Order ($150) | 15 000 | Status: Paid |
+| Over Limit ($1 500) | 150 000 | Payment Declined → Order Failed |
+| Tiny Order ($1) | 100 | Status: Paid |
+| Zero Amount | 0 | 400 Bad Request |
 | Test Idempotency | 2 500 | Run twice — same order returned, no duplicate |
 
-### Status Color Coding
-
-| Status | Color |
-|---|---|
-| Paid / Authorized | Green |
-| Failed / Declined | Red |
-| Pending | Yellow |
-| Cancelled | Gray |
-| 503 / Network Error | Red border |
-
----
-
-## Architecture Decisions
+## Architecture decisions
 
 ### Clean Architecture (per service)
 
@@ -71,214 +263,121 @@ Each service is structured in strict layers with a single direction of dependenc
 
 ```
 Transport (HTTP) → Use Case → Domain
-                      ↑
-                 Repository (interface)
-                      ↑
-               Postgres (implementation)
+                       ↑
+                  Repository (interface)
+                       ↑
+                Postgres (implementation)
 ```
 
 - **Domain**: Pure Go structs, zero framework dependencies.
-- **Repository (port)**: Interface defined in the `repository` package. Use cases depend only on the interface.
-- **Use Case**: All business logic lives here. Depends on repository interfaces and external client interfaces — never on concrete implementations.
+- **Repository (port)**: Interface defined in the repository package. Use cases depend only on the interface.
+- **Use Case**: All business logic. Depends on repository interfaces and external client interfaces — never on concrete implementations.
 - **Transport**: Thin Gin handlers. Only parse requests, call use cases, return responses.
-- **Composition Root** (`main.go`): The only place where concrete types are instantiated and wired together (manual DI).
+- **Composition Root (`main.go`)**: The only place where concrete types are instantiated and wired together (manual DI).
 
-### Money Representation
+### Money representation
 
-All monetary amounts are stored and transmitted as `int64` (cents). `float64` is **never** used for money to avoid floating-point precision errors.
+All monetary amounts are stored and transmitted as `int64` (cents). `float64` is never used for money to avoid floating-point precision errors.
 
-### No Shared Code
+### No shared code
 
 Each service has its own domain models, interfaces, and utilities. There is no shared/common package. This enforces bounded-context isolation and allows services to evolve independently.
 
----
-
-## Bounded Contexts
+### Bounded contexts
 
 | Context | Responsibility | DB |
 |---|---|---|
-| **Order** | Lifecycle of a customer purchase: creation, payment orchestration, cancellation | `order_db` (port 5433) |
-| **Payment** | Authorization of a payment transaction for a given order | `payment_db` (port 5434) |
+| Order | Lifecycle of a customer purchase: creation, payment orchestration, cancellation | `order_db` (port 5433) |
+| Payment | Authorization of a payment transaction for a given order | `payment_db` (port 5434) |
+| **Notification** | **Send email/push notifications on payment events** | **`notification_db` (port 5435)** |
 
-The Order service **orchestrates** the flow: it creates the order, calls the Payment service synchronously via REST, and updates the order status based on the result. The Payment service is stateless with respect to orders — it only decides Authorized/Declined.
+The Order service orchestrates the synchronous flow; Notification Service consumes events asynchronously over RabbitMQ.
 
----
+### Inter-service communication
 
-## Inter-Service Communication
+- **Sync (Order → Payment)**: gRPC unary RPC. `PaymentService.ProcessPayment` with `order_id`, `amount`, `customer_email`. Failures bubble up as 503.
+- **Async (Payment → Notification)**: RabbitMQ. Publisher confirms on producer side, manual ACK + idempotency on consumer side, DLQ for poison messages.
 
-- **Protocol**: REST over HTTP (synchronous)
-- **Order → Payment**: `POST /payments` with `{"order_id": "...", "amount": 15000}`
-- **HTTP Client Timeout**: 2 seconds (configured in `order-service/internal/app/app.go`)
-- **Failure Handling**: If the Payment service is unreachable or times out, the Order service marks the order as `"Failed"` and returns `503 Service Unavailable` to the caller.
+### Test real-time streaming
 
----
+Order Service exposes a gRPC server-side streaming endpoint that pushes order status changes in real time:
 
-## Failure Handling
+Terminal 1 — connect the stream client:
+```bash
+cd order-service && go run cmd/stream-client/main.go 
+```
 
-| Failure Scenario | Behavior |
+Terminal 2 — trigger a status change:
+```bash
+docker exec -it order_db psql -U postgres order_db -c \
+  "UPDATE orders SET status='Cancelled' WHERE id=''"
+```
+
+The stream client in Terminal 1 will print the new status immediately.
+
+## Failure handling
+
+| Failure scenario | Behavior |
 |---|---|
 | Payment service down | Order marked `Failed`, HTTP 503 returned |
 | Payment service returns Declined | Order marked `Failed`, HTTP 201 returned with status |
 | Order not found | HTTP 404 |
 | Cancel a Paid order | HTTP 409 Conflict |
 | Amount ≤ 0 | HTTP 400 Bad Request |
-| Amount > 100000 cents | Payment `Declined`, Order `Failed` |
+| Amount > 100000 cents | Payment Declined, Order Failed |
 | Duplicate request (idempotency key) | Same order returned, no duplicate created |
+| **RabbitMQ broker down** | **Payment commits, publish logs warning; consumer reconnects when broker is back** |
+| **Notification handler error** | **Retry up to 3 times, then dead-letter to DLQ** |
 
----
+## API reference
 
-## Architecture Diagram
+### Order Service (`localhost:18080`)
 
-```mermaid
-graph TD
-    Browser([Browser<br/>localhost:3000])
-
-    subgraph frontend
-        Nginx[nginx<br/>static files + proxy]
-    end
-
-    subgraph order-service
-        OH[HTTP Handler<br/>Gin]
-        OUC[Order UseCase]
-        OR[(OrderRepository<br/>interface)]
-        ODB[(order_db<br/>PostgreSQL :5433)]
-        PC[HTTPPaymentClient]
-    end
-
-    subgraph payment-service
-        PH[HTTP Handler<br/>Gin]
-        PUC[Payment UseCase]
-        PR[(PaymentRepository<br/>interface)]
-        PDB[(payment_db<br/>PostgreSQL :5434)]
-    end
-
-    Browser -->|/api/orders<br/>/api/payments| Nginx
-    Nginx -->|proxy /api/orders → :8080/orders| OH
-    Nginx -->|proxy /api/payments → :8081/payments| PH
-    OH --> OUC
-    OUC --> OR
-    OR --> ODB
-    OUC -->|POST /payments<br/>2s timeout| PC
-    PC -->|REST| PH
-    PH --> PUC
-    PUC --> PR
-    PR --> PDB
-```
-
----
-
-
-## API Reference
-
-### Order Service (`localhost:8080`)
-
-#### Create Order
-
+**Create Order**
 ```bash
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18080/orders \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: unique-request-id-1" \
-  -d '{"customer_id": "cust-123", "item_name": "Laptop", "amount": 15000}'
+  -d '{
+    "customer_id":    "cust-123",
+    "customer_email": "alice@example.com",
+    "item_name":      "Laptop",
+    "amount":         15000
+  }'
 ```
 
-**Response (201):**
+> **Assignment 3 change:** `customer_email` is now a **required** field with format validation.
+
+Response (201):
 ```json
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
   "customer_id": "cust-123",
+  "customer_email": "alice@example.com",
   "item_name": "Laptop",
   "amount": 15000,
   "status": "Paid",
-  "created_at": "2026-03-28T12:00:00Z"
+  "created_at": "2026-04-28T12:00:00Z"
 }
 ```
 
-#### Get Order
-
+**Get / Cancel Order**
 ```bash
-curl http://localhost:8080/orders/550e8400-e29b-41d4-a716-446655440000
+curl http://localhost:18080/orders/
+curl -X PATCH http://localhost:18080/orders//cancel
 ```
 
-#### Cancel Order
+### Payment Service (`localhost:18081`)
 
 ```bash
-curl -X PATCH http://localhost:8080/orders/550e8400-e29b-41d4-a716-446655440000/cancel
-```
-
-**Error (409) — paid order:**
-```json
-{"error": "paid orders cannot be cancelled"}
-```
-
-#### Test Payment Decline (amount > 100000)
-
-```bash
-curl -X POST http://localhost:8080/orders \
+curl -X POST http://localhost:18081/payments \
   -H "Content-Type: application/json" \
-  -d '{"customer_id": "cust-456", "item_name": "Yacht", "amount": 999999}'
+  -d '{"order_id":"","amount":15000,"customer_email":"alice@example.com"}'
+
+curl http://localhost:18081/payments/
 ```
 
-**Response (201):**
-```json
-{
-  "id": "...",
-  "status": "Failed",
-  ...
-}
-```
-
----
-
-### Payment Service (`localhost:8081`)
-
-#### Process Payment
-
-```bash
-curl -X POST http://localhost:8081/payments \
-  -H "Content-Type: application/json" \
-  -d '{"order_id": "550e8400-e29b-41d4-a716-446655440000", "amount": 15000}'
-```
-
-**Response (201 — Authorized):**
-```json
-{
-  "id": "...",
-  "order_id": "550e8400-e29b-41d4-a716-446655440000",
-  "transaction_id": "a1b2c3d4-...",
-  "amount": 15000,
-  "status": "Authorized"
-}
-```
-
-#### Get Payment by Order ID
-
-```bash
-curl http://localhost:8081/payments/550e8400-e29b-41d4-a716-446655440000
-```
-
----
-
-## Idempotency
-
-`POST /orders` supports the `Idempotency-Key` header. If a request is retried with the same key, the original order is returned without creating a duplicate.
-
-```bash
-# First call — creates order
-curl -X POST http://localhost:8080/orders \
-  -H "Idempotency-Key: req-abc-123" \
-  -H "Content-Type: application/json" \
-  -d '{"customer_id": "cust-1", "item_name": "Book", "amount": 2500}'
-
-# Retry — returns the same order, no duplicate
-curl -X POST http://localhost:8080/orders \
-  -H "Idempotency-Key: req-abc-123" \
-  -H "Content-Type: application/json" \
-  -d '{"customer_id": "cust-1", "item_name": "Book", "amount": 2500}'
-```
-
----
-
-## Order Status Flow
+## Order status flow
 
 ```
 Pending → Paid       (payment authorized)

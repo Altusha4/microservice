@@ -23,14 +23,16 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 }
 
 type processPaymentRequest struct {
-	OrderID string `json:"order_id" binding:"required"`
-	Amount  int64  `json:"amount"   binding:"required,gt=0"`
+	OrderID       string `json:"order_id"       binding:"required"`
+	Amount        int64  `json:"amount"         binding:"required,gt=0"`
+	CustomerEmail string `json:"customer_email" binding:"omitempty,email"`
 }
 
 type paymentResponse struct {
 	ID            string `json:"id"`
 	OrderID       string `json:"order_id"`
 	TransactionID string `json:"transaction_id,omitempty"`
+	CustomerEmail string `json:"customer_email,omitempty"`
 	Amount        int64  `json:"amount"`
 	Status        string `json:"status"`
 }
@@ -40,6 +42,7 @@ func toPaymentResponse(p *domain.Payment) paymentResponse {
 		ID:            p.ID,
 		OrderID:       p.OrderID,
 		TransactionID: p.TransactionID,
+		CustomerEmail: p.CustomerEmail,
 		Amount:        p.Amount,
 		Status:        p.Status,
 	}
@@ -52,7 +55,12 @@ func (h *Handler) ProcessPayment(c *gin.Context) {
 		return
 	}
 
-	payment, err := h.paymentUC.ProcessPayment(c.Request.Context(), req.OrderID, req.Amount)
+	payment, err := h.paymentUC.ProcessPayment(
+		c.Request.Context(),
+		req.OrderID,
+		req.Amount,
+		req.CustomerEmail,
+	)
 	if err != nil {
 		if errors.Is(err, usecase.ErrInvalidAmount) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

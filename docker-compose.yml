@@ -1,6 +1,9 @@
 version: "3.9"
 
 services:
+  # ##############################
+  # DATABASES
+  # ##############################
   order-db:
     image: postgres:16-alpine
     container_name: order_db
@@ -37,6 +40,47 @@ services:
       timeout: 5s
       retries: 10
 
+  notification-db:
+    image: postgres:16-alpine
+    container_name: notification_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: notification_db
+    ports:
+      - "5435:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+      - ./notification-service/migrations/001_create_processed_events.sql:/docker-entrypoint-initdb.d/001_create_processed_events.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ##############################
+  # MESSAGE BROKER
+  # ##############################
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI (http://localhost:15672, guest/guest)
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ##############################
+  # SERVICES
+  # ##############################
   payment-service:
     build:
       context: ./payment-service
@@ -44,6 +88,7 @@ services:
     container_name: payment_service
     environment:
       PAYMENT_DB_DSN: postgres://postgres:postgres@payment-db:5432/payment_db?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       HTTP_PORT: "8081"
       GRPC_PORT: "50051"
     ports:
@@ -51,6 +96,8 @@ services:
       - "50051:50051"
     depends_on:
       payment-db:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
 
   order-service:
@@ -72,6 +119,20 @@ services:
       payment-service:
         condition: service_started
 
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: notification_service
+    environment:
+      NOTIFICATION_DB_DSN: postgres://postgres:postgres@notification-db:5432/notification_db?sslmode=disable
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend
@@ -83,6 +144,11 @@ services:
       - order-service
       - payment-service
 
+# ##############################
+# VOLUMES
+# ##############################
 volumes:
   order_db_data:
   payment_db_data:
+  notification_db_data:
+  rabbitmq_data:
