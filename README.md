@@ -25,44 +25,44 @@ flowchart LR
     User([User / Frontend])
 
     subgraph Order["order-service"]
-        OrderAPI[HTTP API :8080]
-        OrderDB[(order_db)]
+        OrderAPI["HTTP API :8080"]
+        OrderDB[("order_db")]
     end
 
     subgraph Payment["payment-service"]
-        PayGRPC[gRPC :50051]
-        PayUC[ProcessPayment usecase]
-        PayDB[(payment_db)]
-        PayPub[RabbitMQ Publisherpublisher confirms]
+        PayGRPC["gRPC :50051"]
+        PayUC["ProcessPayment usecase"]
+        PayDB[("payment_db")]
+        PayPub["RabbitMQ Publisher with confirms"]
     end
 
     subgraph RMQ["RabbitMQ broker"]
-        ExMain([exchangepaymentsdirect, durable])
-        QMain[[queuepayment.completeddurable, x-DLX]]
-        ExDLX([exchangepayments.dlxdirect, durable])
-        QDLQ[[queuepayment.completed.dlqdurable]]
+        ExMain(["exchange: payments (direct, durable)"])
+        QMain[["queue: payment.completed (durable, x-DLX)"]]
+        ExDLX(["exchange: payments.dlx (direct, durable)"])
+        QDLQ[["queue: payment.completed.dlq (durable)"]]
     end
 
     subgraph Notify["notification-service"]
-        NConsumer[Consumermanual ACK, prefetch=1]
-        NUC[HandlePaymentCompleted]
-        NDB[(notification_dbprocessed_events)]
+        NConsumer["Consumer: manual ACK, prefetch=1"]
+        NUC["HandlePaymentCompleted"]
+        NDB[("notification_db: processed_events")]
     end
 
-    User -- "POST /orders" --> OrderAPI
-    OrderAPI  OrderDB
-    OrderAPI -- "gRPC ProcessPayment" --> PayGRPC
+    User -->|POST /orders| OrderAPI
+    OrderAPI --> OrderDB
+    OrderAPI -->|gRPC ProcessPayment| PayGRPC
     PayGRPC --> PayUC
-    PayUC -- "INSERT + commit" --> PayDB
-    PayUC -- "publish event" --> PayPub
-    PayPub -- "JSON, persistent" --> ExMain
-    ExMain -- "rk: payment.completed" --> QMain
-    QMain -- "deliver" --> NConsumer
+    PayUC -->|INSERT + commit| PayDB
+    PayUC -->|publish event| PayPub
+    PayPub -->|JSON, persistent| ExMain
+    ExMain -->|rk: payment.completed| QMain
+    QMain -->|deliver| NConsumer
     NConsumer --> NUC
-    NUC -- "INSERT ON CONFLICT DO NOTHING" --> NDB
-    NUC -- "log: Sent email to ..." --> NConsumer
-    NConsumer -. "Nack(requeue=false)after 3 retries" .-> ExDLX
-    ExDLX -- "rk: payment.completed.dead" --> QDLQ
+    NUC -->|INSERT ON CONFLICT DO NOTHING| NDB
+    NUC -->|log: Sent email to ...| NConsumer
+    NConsumer -. "Nack(requeue=false) after 3 retries" .-> ExDLX
+    ExDLX -->|rk: payment.completed.dead| QDLQ
 
     classDef db fill:#fef3c7,stroke:#92400e
     classDef queue fill:#dbeafe,stroke:#1e3a8a
@@ -143,10 +143,10 @@ curl -X POST http://localhost:18080/orders \
 Notification Service logs:
 
 ```
-[notification][retry 1/3] event ... — requeueing
-[notification][retry 2/3] event ... — requeueing
-[notification][retry 3/3] event ... — requeueing
-[notification][give-up]   event ... exhausted 3 attempts — dead-lettering
+[notification][retry 1/3] event ... requeueing
+[notification][retry 2/3] event ... requeueing
+[notification][retry 3/3] event ... requeueing
+[notification][give-up]   event ... exhausted 3 attempts dead-lettering
 ```
 
 In the RabbitMQ UI (<http://localhost:15672>, `guest`/`guest`) → **Queues** → `payment.completed.dlq` → **Ready: 1**. Click *Get Message(s)* — the original payload is there with an `x-death` header populated by RabbitMQ documenting why it landed.
@@ -214,7 +214,7 @@ To trigger the DLQ flow, use `customer_email: "fail@test.com"` (see DLQ demo abo
 
 # Assignment 2 — gRPC between Order and Payment
 
-A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles. Includes a frontend dashboard at <http://localhost:13000> for interactive demo during presentations.
+A two-service microservice platform built with Go, Gin, and PostgreSQL, following Clean Architecture and Domain-Driven Design principles.
 
 ## Proto & Generated Code Repositories
 
@@ -225,41 +225,15 @@ A two-service microservice platform built with Go, Gin, and PostgreSQL, followin
 
 ## What changed in Assignment 2
 
-- **Order → Payment via gRPC**: Order Service now calls Payment Service over gRPC instead of REST.
+- **Order → Payment via gRPC**: Order Service calls Payment Service over gRPC instead of REST.
 - **Payment Service gRPC server**: runs on port 50051 alongside its HTTP server on port 8081.
 - **Order Service gRPC streaming server**: runs on port 50052 for real-time order status updates.
 - **Contract-First approach**: `.proto` files live in `ap2-protos`; auto-generated `.pb.go` files are pushed to `ap2-generated` via GitHub Actions.
 - **gRPC Logging Interceptor (bonus)**: server-side unary interceptor on Payment Service logs every incoming RPC with the method name and duration.
 
-## Frontend Dashboard
-
-The dashboard is a single-page app served by nginx that proxies all API calls to avoid CORS issues.
-
-### Sections
-
-| Section | Description |
-|---|---|
-| Quick Demo | One-click buttons that prefill the form with test scenarios |
-| Create Order | Form with Customer ID, Item Name, Amount (cents), optional Idempotency-Key |
-| Order Actions | Get order by ID; cancel order (demonstrates 409 for paid orders) |
-| Payment Lookup | Retrieve payment status by order ID |
-| Activity Log | Real-time log of every request — method, endpoint, status code, collapsible body |
-
-### Quick Demo Scenarios
-
-| Button | Amount | Expected Result |
-|---|---|---|
-| Normal Order ($150) | 15 000 | Status: Paid |
-| Over Limit ($1 500) | 150 000 | Payment Declined → Order Failed |
-| Tiny Order ($1) | 100 | Status: Paid |
-| Zero Amount | 0 | 400 Bad Request |
-| Test Idempotency | 2 500 | Run twice — same order returned, no duplicate |
-
 ## Architecture decisions
 
 ### Clean Architecture (per service)
-
-Each service is structured in strict layers with a single direction of dependency:
 
 ```
 Transport (HTTP) → Use Case → Domain
@@ -279,41 +253,15 @@ Transport (HTTP) → Use Case → Domain
 
 All monetary amounts are stored and transmitted as `int64` (cents). `float64` is never used for money to avoid floating-point precision errors.
 
-### No shared code
-
-Each service has its own domain models, interfaces, and utilities. There is no shared/common package. This enforces bounded-context isolation and allows services to evolve independently.
-
 ### Bounded contexts
 
 | Context | Responsibility | DB |
 |---|---|---|
 | Order | Lifecycle of a customer purchase: creation, payment orchestration, cancellation | `order_db` (port 5433) |
 | Payment | Authorization of a payment transaction for a given order | `payment_db` (port 5434) |
-| **Notification** | **Send email/push notifications on payment events** | **`notification_db` (port 5435)** |
+| **Notification** | **Send email notifications on payment events** | **`notification_db` (port 5435)** |
 
 The Order service orchestrates the synchronous flow; Notification Service consumes events asynchronously over RabbitMQ.
-
-### Inter-service communication
-
-- **Sync (Order → Payment)**: gRPC unary RPC. `PaymentService.ProcessPayment` with `order_id`, `amount`, `customer_email`. Failures bubble up as 503.
-- **Async (Payment → Notification)**: RabbitMQ. Publisher confirms on producer side, manual ACK + idempotency on consumer side, DLQ for poison messages.
-
-### Test real-time streaming
-
-Order Service exposes a gRPC server-side streaming endpoint that pushes order status changes in real time:
-
-Terminal 1 — connect the stream client:
-```bash
-cd order-service && go run cmd/stream-client/main.go 
-```
-
-Terminal 2 — trigger a status change:
-```bash
-docker exec -it order_db psql -U postgres order_db -c \
-  "UPDATE orders SET status='Cancelled' WHERE id=''"
-```
-
-The stream client in Terminal 1 will print the new status immediately.
 
 ## Failure handling
 
@@ -333,7 +281,8 @@ The stream client in Terminal 1 will print the new status immediately.
 
 ### Order Service (`localhost:18080`)
 
-**Create Order**
+**Create Order** (Assignment 3 change: `customer_email` is required with format validation)
+
 ```bash
 curl -X POST http://localhost:18080/orders \
   -H "Content-Type: application/json" \
@@ -346,25 +295,11 @@ curl -X POST http://localhost:18080/orders \
   }'
 ```
 
-> **Assignment 3 change:** `customer_email` is now a **required** field with format validation.
-
-Response (201):
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "customer_id": "cust-123",
-  "customer_email": "alice@example.com",
-  "item_name": "Laptop",
-  "amount": 15000,
-  "status": "Paid",
-  "created_at": "2026-04-28T12:00:00Z"
-}
-```
-
 **Get / Cancel Order**
+
 ```bash
-curl http://localhost:18080/orders/
-curl -X PATCH http://localhost:18080/orders//cancel
+curl http://localhost:18080/orders/<id>
+curl -X PATCH http://localhost:18080/orders/<id>/cancel
 ```
 
 ### Payment Service (`localhost:18081`)
@@ -372,9 +307,9 @@ curl -X PATCH http://localhost:18080/orders//cancel
 ```bash
 curl -X POST http://localhost:18081/payments \
   -H "Content-Type: application/json" \
-  -d '{"order_id":"","amount":15000,"customer_email":"alice@example.com"}'
+  -d '{"order_id":"<id>","amount":15000,"customer_email":"alice@example.com"}'
 
-curl http://localhost:18081/payments/
+curl http://localhost:18081/payments/<order-id>
 ```
 
 ## Order status flow
