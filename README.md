@@ -1,4 +1,3 @@
-````markdown
 # Order, Payment & Notification Platform
 
 A Go microservice platform built across three Advanced Programming 2 assignments. Each assignment adds one architectural pattern on top of the previous one:
