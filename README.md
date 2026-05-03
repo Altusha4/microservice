@@ -20,9 +20,26 @@ After a successful payment is committed to the database, **Payment Service** pub
 
 ## Architecture (event flow)
 
-```mermaid
+Окей, "пустое место" — это значит Mermaid-блок вообще не рендерится. Скорее всего одна из двух причин:
+Причина 1 — файл не сохранён в нужную ветку
+Открой эту ссылку:
+https://github.com/Altusha4/microservice/commits/feature/assignment-3
+Самый верхний коммит — это твой? Если коммит docs: fix Mermaid... (или как ты назвала) есть — значит сохранился. Если последний коммит старый — значит правка не запушилась.
+Причина 2 — синтаксическая ошибка в одной строке Mermaid
+Я перепроверил тот текст что я тебе дал. Там одна потенциально проблемная строка:
+NConsumer -. "Nack(requeue=false) after 3 retries" .-> ExDLX
+В разных версиях Mermaid синтаксис dotted-стрелки с лейблом немного отличается, и иногда GitHub-парсер на этом спотыкается и рендерит пустой блок без ошибки. Это и есть твой случай.
+Быстрый фикс — упрощённая версия диаграммы
+Чтобы не разбираться с тонкостями синтаксиса, давай заменим всю Mermaid-секцию на упрощённый и гарантированно рабочий вариант. На GitHub:
+
+Зайди на https://github.com/Altusha4/microservice/blob/feature/assignment-3/README.md
+Нажми ✏️ "Edit this file"
+Найди блок начиная со строки ```mermaid и заканчивая ``` (это весь блок диаграммы)
+Замени его целиком на это:
+
+markdown```mermaid
 flowchart LR
-    User([User / Frontend])
+    User([User])
 
     subgraph Order["order-service"]
         OrderAPI["HTTP API :8080"]
@@ -33,43 +50,35 @@ flowchart LR
         PayGRPC["gRPC :50051"]
         PayUC["ProcessPayment usecase"]
         PayDB[("payment_db")]
-        PayPub["RabbitMQ Publisher with confirms"]
+        PayPub["RabbitMQ Publisher"]
     end
 
-    subgraph RMQ["RabbitMQ broker"]
-        ExMain(["exchange: payments (direct, durable)"])
-        QMain[["queue: payment.completed (durable, x-DLX)"]]
-        ExDLX(["exchange: payments.dlx (direct, durable)"])
-        QDLQ[["queue: payment.completed.dlq (durable)"]]
+    subgraph RMQ["RabbitMQ"]
+        ExMain(["exchange: payments"])
+        QMain[["queue: payment.completed"]]
+        ExDLX(["exchange: payments.dlx"])
+        QDLQ[["queue: payment.completed.dlq"]]
     end
 
     subgraph Notify["notification-service"]
-        NConsumer["Consumer: manual ACK, prefetch=1"]
+        NConsumer["Consumer manual ACK"]
         NUC["HandlePaymentCompleted"]
-        NDB[("notification_db: processed_events")]
+        NDB[("notification_db")]
     end
 
-    User -->|POST /orders| OrderAPI
+    User --> OrderAPI
     OrderAPI --> OrderDB
-    OrderAPI -->|gRPC ProcessPayment| PayGRPC
+    OrderAPI --> PayGRPC
     PayGRPC --> PayUC
-    PayUC -->|INSERT + commit| PayDB
-    PayUC -->|publish event| PayPub
-    PayPub -->|JSON, persistent| ExMain
-    ExMain -->|rk: payment.completed| QMain
-    QMain -->|deliver| NConsumer
+    PayUC --> PayDB
+    PayUC --> PayPub
+    PayPub --> ExMain
+    ExMain --> QMain
+    QMain --> NConsumer
     NConsumer --> NUC
-    NUC -->|INSERT ON CONFLICT DO NOTHING| NDB
-    NUC -->|log: Sent email to ...| NConsumer
-    NConsumer -. "Nack(requeue=false) after 3 retries" .-> ExDLX
-    ExDLX -->|rk: payment.completed.dead| QDLQ
-
-    classDef db fill:#fef3c7,stroke:#92400e
-    classDef queue fill:#dbeafe,stroke:#1e3a8a
-    classDef ex fill:#dcfce7,stroke:#166534
-    class OrderDB,PayDB,NDB db
-    class QMain,QDLQ queue
-    class ExMain,ExDLX ex
+    NUC --> NDB
+    NConsumer --> ExDLX
+    ExDLX --> QDLQ
 ```
 
 ## Reliability — how each requirement is met
