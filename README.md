@@ -1,3 +1,4 @@
+````markdown
 # Order, Payment & Notification Platform
 
 A Go microservice platform built across three Advanced Programming 2 assignments. Each assignment adds one architectural pattern on top of the previous one:
@@ -20,24 +21,7 @@ After a successful payment is committed to the database, **Payment Service** pub
 
 ## Architecture (event flow)
 
-Окей, "пустое место" — это значит Mermaid-блок вообще не рендерится. Скорее всего одна из двух причин:
-Причина 1 — файл не сохранён в нужную ветку
-Открой эту ссылку:
-https://github.com/Altusha4/microservice/commits/feature/assignment-3
-Самый верхний коммит — это твой? Если коммит docs: fix Mermaid... (или как ты назвала) есть — значит сохранился. Если последний коммит старый — значит правка не запушилась.
-Причина 2 — синтаксическая ошибка в одной строке Mermaid
-Я перепроверил тот текст что я тебе дал. Там одна потенциально проблемная строка:
-NConsumer -. "Nack(requeue=false) after 3 retries" .-> ExDLX
-В разных версиях Mermaid синтаксис dotted-стрелки с лейблом немного отличается, и иногда GitHub-парсер на этом спотыкается и рендерит пустой блок без ошибки. Это и есть твой случай.
-Быстрый фикс — упрощённая версия диаграммы
-Чтобы не разбираться с тонкостями синтаксиса, давай заменим всю Mermaid-секцию на упрощённый и гарантированно рабочий вариант. На GitHub:
-
-Зайди на https://github.com/Altusha4/microservice/blob/feature/assignment-3/README.md
-Нажми ✏️ "Edit this file"
-Найди блок начиная со строки ```mermaid и заканчивая ``` (это весь блок диаграммы)
-Замени его целиком на это:
-
-markdown```mermaid
+```mermaid
 flowchart LR
     User([User])
 
@@ -329,3 +313,19 @@ Pending → Failed     (payment declined or payment service unavailable)
 Pending → Cancelled  (explicit cancel)
 Paid    → ✗          (cannot cancel)
 ```
+````
+
+---
+
+## Что делать на GitHub
+
+1. Открой https://github.com/Altusha4/microservice/blob/feature/assignment-3/README.md
+2. Нажми ✏️ (карандаш справа сверху)
+3. **Cmd+A** — выделить всё, **Delete** — стереть
+4. Скопируй текст выше (всё что между чёрными линиями `---`, не включая их). **Важно:** копируй прямо отсюда из чата, не через промежуточные приложения, иначе опять Markdown поломается.
+5. Вставь в редактор GitHub
+6. Внизу страницы:
+   - Commit message: `docs: clean README and fix Mermaid diagram`
+   - Кнопка **Commit changes**
+
+После сохранения подожди 5 секунд, **Cmd+Shift+R** для жёсткого обновления страницы — увидишь работающую диаграмму с 4 группами блоков.
