@@ -20,49 +20,7 @@ After a successful payment is committed to the database, **Payment Service** pub
 
 ## Architecture (event flow)
 
-```mermaid
-flowchart LR
-    User([User])
-
-    subgraph Order["order-service"]
-        OrderAPI["HTTP API :8080"]
-        OrderDB[("order_db")]
-    end
-
-    subgraph Payment["payment-service"]
-        PayGRPC["gRPC :50051"]
-        PayUC["ProcessPayment usecase"]
-        PayDB[("payment_db")]
-        PayPub["RabbitMQ Publisher"]
-    end
-
-    subgraph RMQ["RabbitMQ"]
-        ExMain(["exchange: payments"])
-        QMain[["queue: payment.completed"]]
-        ExDLX(["exchange: payments.dlx"])
-        QDLQ[["queue: payment.completed.dlq"]]
-    end
-
-    subgraph Notify["notification-service"]
-        NConsumer["Consumer manual ACK"]
-        NUC["HandlePaymentCompleted"]
-        NDB[("notification_db")]
-    end
-
-    User --> OrderAPI
-    OrderAPI --> OrderDB
-    OrderAPI --> PayGRPC
-    PayGRPC --> PayUC
-    PayUC --> PayDB
-    PayUC --> PayPub
-    PayPub --> ExMain
-    ExMain --> QMain
-    QMain --> NConsumer
-    NConsumer --> NUC
-    NUC --> NDB
-    NConsumer --> ExDLX
-    ExDLX --> QDLQ
-```
+![Architecture diagram](evidences/architecture.png)
 
 ## Reliability — how each requirement is met
 
