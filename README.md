@@ -14,7 +14,7 @@ The frontend dashboard from Assignment 2 still works at <http://localhost:13000>
 
 # Assignment 3 — Event-Driven Notifications
 
-> Author: Altynay Yertay · AITU Spring 2026
+> Author: Altynay Yertay
 
 After a successful payment is committed to the database, **Payment Service** publishes a `payment.completed` event to a durable RabbitMQ exchange. **Notification Service** consumes the event with manual acknowledgements, deduplicates it via a Postgres-backed `processed_events` table, and "sends an email" (logs to stdout). Permanent failures land in a Dead Letter Queue after a bounded retry budget.
 
@@ -273,16 +273,4 @@ Paid    → ✗          (cannot cancel)
 ````
 
 ---
-
-## Что делать на GitHub
-
-1. Открой https://github.com/Altusha4/microservice/blob/feature/assignment-3/README.md
-2. Нажми ✏️ (карандаш справа сверху)
-3. **Cmd+A** — выделить всё, **Delete** — стереть
-4. Скопируй текст выше (всё что между чёрными линиями `---`, не включая их). **Важно:** копируй прямо отсюда из чата, не через промежуточные приложения, иначе опять Markdown поломается.
-5. Вставь в редактор GitHub
-6. Внизу страницы:
-   - Commit message: `docs: clean README and fix Mermaid diagram`
-   - Кнопка **Commit changes**
-
 После сохранения подожди 5 секунд, **Cmd+Shift+R** для жёсткого обновления страницы — увидишь работающую диаграмму с 4 группами блоков.
