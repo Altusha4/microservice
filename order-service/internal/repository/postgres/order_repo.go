@@ -28,10 +28,10 @@ func NewOrderRepo(db *sql.DB) *OrderRepo {
 
 func (r *OrderRepo) Create(ctx context.Context, order *domain.Order) error {
 	query := `
-		INSERT INTO orders (id, customer_id, item_name, amount, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
+		INSERT INTO orders (id, customer_id, customer_email, item_name, amount, status, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err := r.db.ExecContext(ctx, query,
-		order.ID, order.CustomerID, order.ItemName,
+		order.ID, order.CustomerID, order.CustomerEmail, order.ItemName,
 		order.Amount, order.Status, order.CreatedAt,
 	)
 	if err != nil {
@@ -46,13 +46,13 @@ func (r *OrderRepo) Create(ctx context.Context, order *domain.Order) error {
 
 func (r *OrderRepo) GetByID(ctx context.Context, id string) (*domain.Order, error) {
 	query := `
-		SELECT id, customer_id, item_name, amount, status, created_at
+		SELECT id, customer_id, customer_email, item_name, amount, status, created_at
 		FROM orders WHERE id = $1`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var o domain.Order
 	var createdAt time.Time
-	err := row.Scan(&o.ID, &o.CustomerID, &o.ItemName, &o.Amount, &o.Status, &createdAt)
+	err := row.Scan(&o.ID, &o.CustomerID, &o.CustomerEmail, &o.ItemName, &o.Amount, &o.Status, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -89,7 +89,7 @@ func (r *OrderRepo) UpdateStatus(ctx context.Context, id, status string) error {
 
 func (r *OrderRepo) GetByIdempotencyKey(ctx context.Context, key string) (*domain.Order, error) {
 	query := `
-		SELECT o.id, o.customer_id, o.item_name, o.amount, o.status, o.created_at
+		SELECT o.id, o.customer_id, o.customer_email, o.item_name, o.amount, o.status, o.created_at
 		FROM orders o
 		JOIN idempotency_keys ik ON ik.order_id = o.id
 		WHERE ik.key = $1`
@@ -97,7 +97,7 @@ func (r *OrderRepo) GetByIdempotencyKey(ctx context.Context, key string) (*domai
 
 	var o domain.Order
 	var createdAt time.Time
-	err := row.Scan(&o.ID, &o.CustomerID, &o.ItemName, &o.Amount, &o.Status, &createdAt)
+	err := row.Scan(&o.ID, &o.CustomerID, &o.CustomerEmail, &o.ItemName, &o.Amount, &o.Status, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
