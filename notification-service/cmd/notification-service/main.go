@@ -7,23 +7,40 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/Altusha4/microservice/notification-service/internal/email"
 	"github.com/Altusha4/microservice/notification-service/internal/infrastructure/rabbitmq"
+	cacheredis "github.com/Altusha4/microservice/notification-service/internal/infrastructure/redis"
 	"github.com/Altusha4/microservice/notification-service/internal/repository/postgres"
 	"github.com/Altusha4/microservice/notification-service/internal/usecase"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	amqp "github.com/rabbitmq/amqp091-go"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func main() {
 	_ = godotenv.Load()
 
-	dsn := getEnv("NOTIFICATION_DB_DSN", "postgres://postgres:postgres@localhost:5435/notification_db?sslmode=disable")
+	dsn := getEnv("NOTIFICATION_DB_DSN",
+		"postgres://postgres:postgres@localhost:5435/notification_db?sslmode=disable")
 	rabbitURL := getEnv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+
+	// Assignment 4 — Redis config
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	redisDB := getEnvInt("REDIS_DB", 0)
+	idempotencyTTL := time.Duration(
+		getEnvInt("NOTIFICATION_IDEMPOTENCY_TTL_SECONDS", 86400),
+	) * time.Second
+
+	// Retry policy
+	maxRetries := getEnvInt("EMAIL_MAX_RETRIES", 3)
+	backoffBaseMs := getEnvInt("EMAIL_BACKOFF_BASE_MS", 2000)
 
 	// ##############################
 	// DB
@@ -35,7 +52,45 @@ func main() {
 	defer db.Close()
 
 	idempotencyRepo := postgres.NewIdempotencyRepo(db)
-	notificationUC := usecase.NewNotificationUseCase(idempotencyRepo)
+
+	// ##############################
+	// Redis (Assignment 4)
+	// ##############################
+	redisClient := goredis.NewClient(&goredis.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+		DB:       redisDB,
+	})
+	defer redisClient.Close()
+
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		log.Fatalf("connect to redis: %v", err)
+	}
+	log.Printf("[notification] connected to redis at %s (idempotency TTL %s)",
+		redisAddr, idempotencyTTL)
+
+	idempotencyCache := cacheredis.NewIdempotencyCache(redisClient, idempotencyTTL)
+
+	// ##############################
+	// Email provider (Adapter Pattern)
+	// ##############################
+	sender, err := email.Build()
+	if err != nil {
+		log.Fatalf("build email sender: %v", err)
+	}
+
+	// ##############################
+	// Wiring
+	// ##############################
+	notificationUC := usecase.NewNotificationUseCase(
+		idempotencyRepo,
+		idempotencyCache,
+		sender,
+		usecase.RetryConfig{
+			MaxAttempts: maxRetries,
+			BaseDelay:   time.Duration(backoffBaseMs) * time.Millisecond,
+		},
+	)
 
 	// ##############################
 	// RabbitMQ
@@ -56,7 +111,6 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Run consumer in current goroutine — it blocks until ctx is done.
 	go func() {
 		<-ctx.Done()
 		log.Println("[notification] shutdown signal received")
@@ -79,6 +133,15 @@ func main() {
 func getEnv(key, fallback string) string {
 	if v, ok := os.LookupEnv(key); ok {
 		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v, ok := os.LookupEnv(key); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return fallback
 }
