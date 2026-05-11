@@ -48,7 +48,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: notification_db
     ports:
-      - "5435:5432"
+      - "5555:5432"
     volumes:
       - notification_db_data:/var/lib/postgresql/data
       - ./notification-service/migrations/001_create_processed_events.sql:/docker-entrypoint-initdb.d/001_create_processed_events.sql:ro
