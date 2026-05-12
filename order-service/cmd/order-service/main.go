@@ -36,6 +36,9 @@ func main() {
 	redisDB := getEnvInt("REDIS_DB", 0)
 	cacheTTL := time.Duration(getEnvInt("ORDER_CACHE_TTL_SECONDS", 300)) * time.Second
 
+	// Assignment 4 bonus — rate limiter config
+	rateLimit := getEnvInt("RATE_LIMIT_PER_MIN", 10)
+
 	// ##############################
 	// DB
 	// ##############################
@@ -90,10 +93,14 @@ func main() {
 	}()
 
 	// ##############################
-	// HTTP server
+	// HTTP server with rate limiter (Assignment 4 bonus)
 	// ##############################
+	rateLimiter := transporthttp.NewRateLimiter(redisClient, rateLimit, time.Minute)
+	log.Printf("[order] rate limiter: %d requests per minute", rateLimit)
+
 	handler := transporthttp.NewHandler(orderUC)
 	r := gin.Default()
+	r.Use(rateLimiter.Middleware())
 	handler.RegisterRoutes(r)
 
 	log.Printf("order-service HTTP listening on :%s", httpPort)
