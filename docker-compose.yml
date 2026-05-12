@@ -48,7 +48,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: notification_db
     ports:
-      - "5435:5432"
+      - "5555:5432"
     volumes:
       - notification_db_data:/var/lib/postgresql/data
       - ./notification-service/migrations/001_create_processed_events.sql:/docker-entrypoint-initdb.d/001_create_processed_events.sql:ro
@@ -68,14 +68,31 @@ services:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
     ports:
-      - "5672:5672"     # AMQP
-      - "15672:15672"   # management UI (http://localhost:15672, guest/guest)
+      - "5672:5672"
+      - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 10s
+      retries: 10
+
+  # ##############################
+  # CACHE (Assignment 4)
+  # ##############################
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
       retries: 10
 
   # ##############################
@@ -105,6 +122,8 @@ services:
       context: ./order-service
       dockerfile: Dockerfile
     container_name: order_service
+    env_file:
+      - .env
     environment:
       ORDER_DB_DSN: postgres://postgres:postgres@order-db:5432/order_db?sslmode=disable
       PAYMENT_GRPC_ADDR: payment-service:50051
@@ -118,12 +137,16 @@ services:
         condition: service_healthy
       payment-service:
         condition: service_started
+      redis:
+        condition: service_healthy
 
   notification-service:
     build:
       context: ./notification-service
       dockerfile: Dockerfile
     container_name: notification_service
+    env_file:
+      - .env
     environment:
       NOTIFICATION_DB_DSN: postgres://postgres:postgres@notification-db:5432/notification_db?sslmode=disable
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -131,6 +154,8 @@ services:
       notification-db:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   frontend:
@@ -152,3 +177,4 @@ volumes:
   payment_db_data:
   notification_db_data:
   rabbitmq_data:
+  redis_data:
